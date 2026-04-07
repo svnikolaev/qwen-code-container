@@ -1,0 +1,12 @@
+# .gitignore
+.env
+.qwen/
+.npm/
+.config/
+workspace/
+*.log
+.DS_Store
+temp/
+tmp/
+temp.*
+tmp.*
