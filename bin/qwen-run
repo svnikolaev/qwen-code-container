@@ -1,612 +1,159 @@
 #!/bin/bash
-# bin/qwen-run - безопасный запуск Qwen Code в Docker/Podman
+# bin/qwen-run — упрощённый прямой запуск Qwen Code (без compose)
+set -euo pipefail
 
-set -e
-
-# Цвета
-RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Конфигурация
+# ----- Конфигурация -----
 QWEN_IMAGE="${QWEN_IMAGE:-ghcr.io/qwenlm/qwen-code:0.14.0}"
-
-# Флаг: модель задана явно (из Makefile) или используется дефолт
-QWEN_MODEL_EXPLICIT="${QWEN_MODEL_EXPLICIT:-0}"
-if [ "$QWEN_MODEL_EXPLICIT" = "1" ]; then
-    QWEN_MODEL="${QWEN_MODEL:-qwen3.6-plus}"
-fi
-
-# Глобальный конфиг (XDG Base Dir)
 CONFIG_NAME="${QWEN_CONFIG_NAME:-qwen-code-docker}"
-GLOBAL_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/${CONFIG_NAME}"
-# Миграция: если старый путь существует, а новый — нет, перенесём
-OLD_CONFIG_DIR="${HOME}/.qwen-docker"
-
+GLOBAL_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/$CONFIG_NAME"
 PROJECT_DIR="$(pwd)"
-# Хэш проекта для уникальной директории .qwen
 PROJECT_HASH=$(echo -n "$PROJECT_DIR" | md5sum | cut -d' ' -f1)
 PROJECT_QWEN_DIR="$GLOBAL_CONFIG_DIR/projects/$PROJECT_HASH/.qwen"
-
 HOST_PORT="${HOST_PORT:-5173}"
 CONTAINER_PORT="${CONTAINER_PORT:-5173}"
+QWEN_MODEL="${QWEN_MODEL:-}"
+QWEN_MODEL_EXPLICIT="${QWEN_MODEL_EXPLICIT:-0}"
 
-# Файлы внутри GLOBAL_CONFIG_DIR
-STATE_FILE="${GLOBAL_CONFIG_DIR}/blocked-paths.json"
-CMD_CACHE="${GLOBAL_CONFIG_DIR}/cmd"
-GLOBAL_SKILLS_DIR="${GLOBAL_CONFIG_DIR}/skills"
-
-# Паттерны для поиска секретов
-DEFAULT_PATTERNS=(
-    ".env" ".env.local" ".env.*.local" ".env.*"
-    "*.key" "*.pem" "*.crt" "*.pk"
-    "secrets" "secret" "credentials.json" "client_secret*.json"
-    ".secret" "id_rsa" "id_dsa" "*.token" "*.password"
-)
-SECRET_PATTERNS=(${QWEN_SECRET_PATTERNS[@]:-${DEFAULT_PATTERNS[@]}})
-
-# Файлы-исключения (не считать секретами, даже если совпали с паттернами)
-SECRET_EXCLUSIONS=(
-    ".env.example"
-)
-
-# Файл игнор-правил проекта
-QWENIGNORE_FILE=".qwenignore"
-
-# Миграция старого конфига
-migrate_config() {
-    if [ -d "$OLD_CONFIG_DIR" ] && [ ! -d "$GLOBAL_CONFIG_DIR" ]; then
-        echo -e "${YELLOW}🔄 Миграция: $OLD_CONFIG_DIR → $GLOBAL_CONFIG_DIR${NC}"
-        mkdir -p "$(dirname "$GLOBAL_CONFIG_DIR")"
-        mv "$OLD_CONFIG_DIR" "$GLOBAL_CONFIG_DIR"
-        echo -e "${GREEN}✅ Конфиг перенесён${NC}"
-    fi
-}
-
-# Определяем runtime (docker/podman) и формируем опции
-detect_runtime() {
-    if command -v docker >/dev/null 2>&1; then
-        local version=$(docker --version 2>/dev/null)
-        if [[ "$version" == *"podman"* ]]; then
-            echo "podman"
-        else
-            echo "docker"
-        fi
-    else
-        echo "unknown"
-    fi
-}
-
-build_user_opts() {
-    local runtime="$1"
-    if [[ "$runtime" == "podman" ]]; then
-        echo "--userns=keep-id --group-add keep-groups"
-    else
-        echo "--user $(id -u):$(id -g) --group-add keep-groups"
-    fi
-}
-
-# Определить команду внутри контейнера (qwen или qwen-code)
-detect_qwen_cmd() {
-    local runtime="$1"
-    local user_opts="$2"
-    if docker run --rm $user_opts "$QWEN_IMAGE" which qwen >/dev/null 2>&1; then
-        echo "qwen"
-        return
-    fi
-    if docker run --rm $user_opts "$QWEN_IMAGE" which qwen-code >/dev/null 2>&1; then
-        echo "qwen-code"
-        return
-    fi
-    echo ""
-}
-
-normalize_path() { cd "$1" && pwd -P; }
-
-load_blocked_for_project() {
-    local path="$1"
-    if [ ! -f "$STATE_FILE" ] || ! command -v jq >/dev/null; then
-        return
-    fi
-    jq -r ".\"$path\" // [] | .[] | select(. != \"\")" "$STATE_FILE" 2>/dev/null || true
-}
-
-# Check if project has already been processed (exists in state file, even if empty array)
-project_already_asked() {
-    local path="$1"
-    if [ ! -f "$STATE_FILE" ] || ! command -v jq >/dev/null; then
-        return 1
-    fi
-    # Check if the key exists in the JSON object
-    local has_key
-    has_key=$(jq -r "has(\"$path\")" "$STATE_FILE" 2>/dev/null || echo "false")
-    [[ "$has_key" == "true" ]]
-}
-
-save_blocked_for_project() {
-    local path="$1"
-    shift
-    local blocked=("$@")
-    local filtered=()
-    for item in "${blocked[@]}"; do
-        [ -n "$item" ] && filtered+=("$item")
-    done
-    mkdir -p "$(dirname "$STATE_FILE")"
-    if ! command -v jq >/dev/null; then
-        echo -e "${YELLOW}⚠️  jq не установлен, выбор не сохранён${NC}" >&2
-        return
-    fi
-    local tmp=$(mktemp)
-    if [ -f "$STATE_FILE" ]; then
-        jq --arg p "$path" --argjson b "$(printf '%s\n' "${filtered[@]}" | jq -R . | jq -s .)" '.[$p] = $b' "$STATE_FILE" > "$tmp"
-    else
-        echo "{}" | jq --arg p "$path" --argjson b "$(printf '%s\n' "${filtered[@]}" | jq -R . | jq -s .)" '.[$p] = $b' > "$tmp"
-    fi
-    mv "$tmp" "$STATE_FILE"
-}
-
-find_secrets() {
-    local found=()
-    for pattern in "$@"; do
-        while IFS= read -r -d '' item; do
-            rel="${item#$PROJECT_DIR/}"
-            [[ "$rel" == "$PROJECT_DIR" ]] && continue
-            [[ -z "$rel" ]] && continue
-            # Проверяем, не в списке ли исключений
-            local excluded=0
-            for excl in "${SECRET_EXCLUSIONS[@]}"; do
-                [[ "$rel" == "$excl" ]] && excluded=1 && break
-            done
-            [[ $excluded -eq 1 ]] && continue
-            found+=("$rel")
-        done < <(find "$PROJECT_DIR" -maxdepth 2 -name "$pattern" -type f -print0 2>/dev/null || true)
-    done
-    # Защита от пустого массива — printf без элементов выдаёт пустую строку
-    if [ ${#found[@]} -gt 0 ]; then
-        printf "%s\n" "${found[@]}" | sort -u
-    fi
-}
-
-# Парсит .qwenignore и возвращает список паттернов (без комментариев и пустых строк)
-parse_qwenignore() {
-    local ignore_file="$1"
-    if [ ! -f "$ignore_file" ]; then
-        return
-    fi
-    sed 's/#.*//' "$ignore_file" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' || true
-}
-
-# Проверяет, соответствует ли путь любому из паттернов .qwenignore
-matches_qwenignore() {
-    local filepath="$1"
-    shift
-    local patterns=("$@")
-    local filename
-    filename="$(basename "$filepath")"
-
-    for pattern in "${patterns[@]}"; do
-        [ -z "$pattern" ] && continue
-
-        if [[ "$filename" == $pattern ]]; then
-            return 0
-        fi
-
-        if [[ "$filepath" == $pattern ]]; then
-            return 0
-        fi
-
-        if [[ "$pattern" == */* ]]; then
-            local clean_pattern="${pattern#/}"
-            if [[ "$filepath" == $clean_pattern ]] || [[ "$filepath" == */$clean_pattern ]]; then
-                return 0
-            fi
-        fi
-
-        if [[ "$pattern" == */ ]]; then
-            local dir_name="${pattern%/}"
-            if [[ "$filepath" == $dir_name/* ]] || [[ "$filepath" == */$dir_name/* ]]; then
-                return 0
-            fi
-        fi
-    done
-    return 1
-}
-
-# Находит файлы, указанные в .qwenignore, которые реально существуют
-find_qwenignore_files() {
-    local patterns=("$@")
-    local found=()
-
-    for pattern in "${patterns[@]}"; do
-        [ -z "$pattern" ] && continue
-
-        if [[ "$pattern" == */ ]]; then
-            local dir_name="${pattern%/}"
-            while IFS= read -r -d '' item; do
-                rel="${item#$PROJECT_DIR/}"
-                [[ "$rel" == "$PROJECT_DIR" ]] && continue
-                found+=("$rel")
-            done < <(find "$PROJECT_DIR" -maxdepth 2 -path "*/$dir_name" -type d -print0 2>/dev/null || true)
-        else
-            while IFS= read -r -d '' item; do
-                rel="${item#$PROJECT_DIR/}"
-                [[ "$rel" == "$PROJECT_DIR" ]] && continue
-                found+=("$rel")
-            done < <(find "$PROJECT_DIR" -maxdepth 2 -name "$pattern" -type f -print0 2>/dev/null || true)
-        fi
-    done
-
-    if [ ${#found[@]} -gt 0 ]; then
-        printf "%s\n" "${found[@]}" | sort -u
-    fi
-}
-
-ask_block() {
-    local ans
-    read -p "Перекрыть при монтировании '$1'? [Y/n]: " ans
-    [[ "${ans:-y}" =~ ^[Yy]$ ]]
-}
-
-build_overlay_opts() {
-    local opts=()
-    for item in "$@"; do
-        opts+=("-v" "/workspace/$item")
-    done
-    echo "${opts[@]}"
-}
-
-show_help() {
-    cat <<EOF
-Использование: $(basename "$0") [опции]
-  --refresh        переспросить о перекрытии файлов
-  --show-blocked   показать перекрытые файлы для текущего проекта
-  --model          показать текущую модель
-  --debug          показать полную команду docker и выйти
-  --help           эта справка
-
-Файл .qwenignore в корне проекта автоматически перекрывает указанные файлы.
-Формат — glob-паттерны, по одному на строку. Комментарии начинаются с #.
-
-Пример .qwenignore:
-  .env
-  *.key
-  secrets/
-  credentials.json
-EOF
-}
-
-REFRESH_MODE=0
-SHOW_BLOCKED=0
-SHOW_MODEL=0
+# ----- Обработка аргументов -----
 DEBUG_MODE=0
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --refresh) REFRESH_MODE=1; shift ;;
-        --show-blocked) SHOW_BLOCKED=1; shift ;;
-        --model) SHOW_MODEL=1; shift ;;
-        --debug) DEBUG_MODE=1; shift ;;
-        --help) show_help; exit 0 ;;
-        *) echo -e "${RED}Неизвестная опция: $1${NC}"; show_help; exit 1 ;;
-    esac
-done
-[ "${QWEN_REFRESH_BLOCK:-0}" = "1" ] && REFRESH_MODE=1
-
-main() {
-    echo -e "${GREEN}🔍 Qwen Code Launcher${NC}"
-    PROJECT_DIR=$(normalize_path "$PROJECT_DIR")
-    echo "Проект: $PROJECT_DIR"
-
-    # --model: показать модель и выйти
-    if [ $SHOW_MODEL -eq 1 ]; then
-        MODEL_FILE="$GLOBAL_CONFIG_DIR/model"
-        if [ "$QWEN_MODEL_EXPLICIT" = "1" ]; then
-            echo -e "🤖 Модель (из Makefile): ${BLUE}$QWEN_MODEL${NC}"
-        elif [ -f "$MODEL_FILE" ]; then
-            echo -e "🤖 Модель (из конфига): ${BLUE}$(cat "$MODEL_FILE")${NC}"
-        else
-            echo -e "${YELLOW}⚠️  Модель не задана (по умолчанию от провайдера)${NC}"
-        fi
-        exit 0
-    fi
-
-    # Миграция старого конфига
-    migrate_config
-
-    # Инициализация глобального конфига — только создание директорий, без chown/chmod
-    mkdir -p "$GLOBAL_CONFIG_DIR"
-    mkdir -p "$GLOBAL_CONFIG_DIR/npm"
-    mkdir -p "$GLOBAL_CONFIG_DIR/config"
-    mkdir -p "$GLOBAL_CONFIG_DIR/skills"
-    mkdir -p "$PROJECT_QWEN_DIR"
-
-    # Копируем скиллы из проекта в глобальные (шареные)
-    PROJECT_CONFIG_DIR="$PROJECT_DIR/config-templates"
-    if [ -d "$PROJECT_CONFIG_DIR/skills" ]; then
-        for f in "$PROJECT_CONFIG_DIR/skills"/*; do
-            [ -f "$f" ] || continue
-            name="$(basename "$f")"
-            if [ ! -f "$GLOBAL_CONFIG_DIR/skills/$name" ]; then
-                cp "$f" "$GLOBAL_CONFIG_DIR/skills/$name"
-                echo -e "${GREEN}📋 Скопирован скилл из проекта: $name${NC}"
-            fi
-        done
-    fi
-
-    # Определяем runtime и опции
-    RUNTIME=$(detect_runtime)
-    USER_OPTS=$(build_user_opts "$RUNTIME")
-
-    # Определяем команду внутри контейнера (кэшируем)
-    QWEN_CMD=""
-    if [ -f "$CMD_CACHE" ]; then
-        QWEN_CMD=$(cat "$CMD_CACHE")
+if [ "${1:-}" = "--debug" ]; then
+    DEBUG_MODE=1
+    shift
+fi
+if [ "${1:-}" = "--model" ]; then
+    # Показать модель и выйти
+    if [ -f "$GLOBAL_CONFIG_DIR/model" ]; then
+        echo "🤖 Текущая модель: $(cat "$GLOBAL_CONFIG_DIR/model")"
     else
-        QWEN_CMD=$(detect_qwen_cmd "$RUNTIME" "$USER_OPTS")
-        if [ -n "$QWEN_CMD" ]; then
-            echo "$QWEN_CMD" > "$CMD_CACHE"
-        fi
+        echo "🤖 Модель не задана (используется по умолчанию от провайдера)"
     fi
+    exit 0
+fi
 
-    if [ -z "$QWEN_CMD" ]; then
-        echo -e "${RED}❌ Не найдена команда qwen или qwen-code внутри образа${NC}"
-        echo "Проверьте образ: docker run --rm $USER_OPTS $QWEN_IMAGE --help"
-        exit 1
-    fi
-    echo -e "${GREEN}✅ Использую команду: $QWEN_CMD${NC}"
+# ----- Runtime detection -----
+if docker --version 2>/dev/null | grep -qi podman; then
+    RUNTIME="podman"
+    USER_OPTS="--userns=keep-id --group-add keep-groups"
+else
+    RUNTIME="docker"
+    USER_OPTS="--user $(id -u):$(id -g) --group-add keep-groups"
+fi
 
-    # Проверка jq
-    if ! command -v jq >/dev/null 2>&1; then
-        echo -e "${YELLOW}⚠️  jq не установлен. Сохранение выбора перекрытия будет недоступно.${NC}"
-        echo -e "${YELLOW}   Установите jq: make check-deps${NC}"
-    fi
+# ----- Создание глобальных директорий -----
+mkdir -p "$GLOBAL_CONFIG_DIR"/{npm,config,skills}
+mkdir -p "$PROJECT_QWEN_DIR"
 
-    # --- Обработка .qwenignore ---
-    qwenignore_patterns=()
-    qwenignore_auto_blocked=()
-    if [ -f "$PROJECT_DIR/$QWENIGNORE_FILE" ]; then
-        echo -e "${BLUE}📋 Найден $QWENIGNORE_FILE${NC}"
-        while IFS= read -r line; do
-            [ -n "$line" ] && qwenignore_patterns+=("$line")
-        done < <(parse_qwenignore "$PROJECT_DIR/$QWENIGNORE_FILE")
-
-        if [ ${#qwenignore_patterns[@]} -gt 0 ]; then
-            echo -e "${BLUE}   Паттерны из $QWENIGNORE_FILE:${NC}"
-            printf '    - %s\n' "${qwenignore_patterns[@]}"
-
-            while IFS= read -r file; do
-                [ -n "$file" ] && qwenignore_auto_blocked+=("$file")
-            done < <(find_qwenignore_files "${qwenignore_patterns[@]}")
-
-            if [ ${#qwenignore_auto_blocked[@]} -gt 0 ]; then
-                echo -e "${GREEN}   ✅ Автоматически перекрыты (${#qwenignore_auto_blocked[@]}):${NC}"
-                printf '      - %s\n' "${qwenignore_auto_blocked[@]}"
-            else
-                echo -e "${YELLOW}   ⚠️  Файлы по паттернам не найдены${NC}"
-            fi
-        fi
-    fi
-
-    # --- Поиск секретов по встроенным паттернам ---
-    raw_secrets=($(find_secrets "${SECRET_PATTERNS[@]}"))
-    # Фильтруем пустые элементы (bash array quirk)
-    secrets=()
-    for s in "${raw_secrets[@]}"; do
-        [[ -n "$s" ]] && secrets+=("$s")
+# ----- Копирование скиллов и шаблонов (один раз) -----
+REAL_SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || echo "$0")
+REAL_SCRIPT_DIR=$(dirname "$REAL_SCRIPT_PATH")
+if [ -d "$REAL_SCRIPT_DIR/../config-templates/skills" ]; then
+    for f in "$REAL_SCRIPT_DIR/../config-templates/skills"/*.md; do
+        [ -f "$f" ] || continue
+        name=$(basename "$f")
+        [ ! -f "$GLOBAL_CONFIG_DIR/skills/$name" ] && cp "$f" "$GLOBAL_CONFIG_DIR/skills/$name"
     done
-
-    # Исключаем файлы, уже перекрытые через .qwenignore
-    remaining_secrets=()
-    for s in "${secrets[@]}"; do
-        if [ ${#qwenignore_auto_blocked[@]} -gt 0 ] && matches_qwenignore "$s" "${qwenignore_auto_blocked[@]}"; then
-            continue
-        fi
-        remaining_secrets+=("$s")
+fi
+if [ -d "$REAL_SCRIPT_DIR/../config-templates/qwen" ]; then
+    for f in "$REAL_SCRIPT_DIR/../config-templates/qwen"/*; do
+        [ -f "$f" ] || continue
+        name=$(basename "$f")
+        [[ "$name" == ".gitignore" ]] && continue
+        [ ! -f "$PROJECT_QWEN_DIR/$name" ] && cp "$f" "$PROJECT_QWEN_DIR/$name"
     done
-    secrets=("${remaining_secrets[@]}")
+fi
 
-    if [ ${#secrets[@]} -eq 0 ] && [ ${#qwenignore_auto_blocked[@]} -eq 0 ]; then
-        echo -e "${GREEN}✅ Секреты не обнаружены${NC}"
-        overlay_opts=""
-    else
-        if [ ${#secrets[@]} -gt 0 ]; then
-            echo -e "${YELLOW}⚠️  Найдены потенциально секретные файлы:${NC}"
-            printf '  - %s\n' "${secrets[@]}"
-            echo ""
-        fi
+# ----- Обработка .qwenignore (простое перекрытие) -----
+OVERLAY_VOLUMES=()
+if [ -f "$PROJECT_DIR/.qwenignore" ]; then
+    echo -e "${BLUE}📋 Найден .qwenignore — перекрываю указанные файлы${NC}"
+    while IFS= read -r line; do
+        pattern=$(echo "$line" | sed 's/#.*//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        [ -z "$pattern" ] && continue
+        # Ищем файлы по паттерну (глубина 2)
+        while IFS= read -r -d '' file; do
+            rel="${file#$PROJECT_DIR/}"
+            [ -n "$rel" ] && OVERLAY_VOLUMES+=(-v "/workspace/$rel")
+        done < <(find "$PROJECT_DIR" -maxdepth 2 -path "$PROJECT_DIR/$pattern" -type f -print0 2>/dev/null || true)
+    done < "$PROJECT_DIR/.qwenignore"
+fi
 
-        saved=()
-        if [ $REFRESH_MODE -eq 0 ] && [ -f "$STATE_FILE" ] && command -v jq >/dev/null; then
-            while IFS= read -r line; do
-                [ -n "$line" ] && saved+=("$line")
-            done < <(load_blocked_for_project "$PROJECT_DIR")
-        fi
+# ----- Модель -----
+MODEL_ARGS=()
+if [ "$QWEN_MODEL_EXPLICIT" = "1" ] && [ -n "$QWEN_MODEL" ]; then
+    MODEL_ARGS=(--model "$QWEN_MODEL")
+    echo -e "${BLUE}🤖 Модель (из Makefile): $QWEN_MODEL${NC}"
+elif [ -f "$GLOBAL_CONFIG_DIR/model" ]; then
+    MODEL_ARGS=(--model "$(cat "$GLOBAL_CONFIG_DIR/model")")
+    echo -e "${BLUE}🤖 Модель (из конфига): $(cat "$GLOBAL_CONFIG_DIR/model")${NC}"
+else
+    echo -e "${YELLOW}⚠️  Модель не задана — используется по умолчанию от провайдера${NC}"
+fi
 
-        if [ $SHOW_BLOCKED -eq 1 ]; then
-            if [ ${#saved[@]} -gt 0 ]; then
-                echo -e "${BLUE}Перекрываются:${NC}"
-                printf '  - %s\n' "${saved[@]}"
-            else
-                echo -e "${YELLOW}Нет сохранённых перекрытий${NC}"
-            fi
-            exit 0
-        fi
+# ----- Git config -----
+GIT_ENVS=()
+if git config --global user.name >/dev/null 2>&1; then
+    GIT_ENVS+=(-e "GIT_CONFIG_NAME=$(git config --global user.name)")
+fi
+if git config --global user.email >/dev/null 2>&1; then
+    GIT_ENVS+=(-e "GIT_CONFIG_EMAIL=$(git config --global user.email)")
+fi
 
-        if [ $REFRESH_MODE -eq 1 ] || ! project_already_asked "$PROJECT_DIR"; then
-            to_block=("${qwenignore_auto_blocked[@]}")
+# ----- Монтирования -----
+VOLUMES=(
+    -v "$PROJECT_DIR":/workspace
+    -v "$GLOBAL_CONFIG_DIR/npm":/root/.npm
+    -v "$GLOBAL_CONFIG_DIR/config":/root/.config
+    -v "$PROJECT_QWEN_DIR":/root/.qwen
+    -v "$PROJECT_QWEN_DIR":/workspace/.qwen
+    -v "$GLOBAL_CONFIG_DIR/skills":/root/.qwen/shared-skills:ro
+)
+[ -f "$PROJECT_DIR/AGENTS.md" ] && VOLUMES+=(-v "$PROJECT_DIR/AGENTS.md":/root/AGENTS.md:ro)
 
-            if [ "${QWEN_AUTO_BLOCK_SECRETS}" = "1" ]; then
-                for s in "${secrets[@]}"; do
-                    to_block+=("$s")
-                done
-            else
-                for s in "${secrets[@]}"; do
-                    ask_block "$s" && to_block+=("$s")
-                done
-            fi
-            to_block_clean=()
-            for item in "${to_block[@]}"; do
-                [ -n "$item" ] && to_block_clean+=("$item")
-            done
-            to_block=("${to_block_clean[@]}")
-            # ALWAYS save, even if empty, to mark that we've already asked
-            if command -v jq >/dev/null; then
-                save_blocked_for_project "$PROJECT_DIR" "${to_block[@]}"
-                echo -e "${GREEN}💾 Выбор сохранён${NC}"
-            fi
-        else
-            to_block=("${qwenignore_auto_blocked[@]}")
-            for s in "${saved[@]}"; do
-                already=0
-                for b in "${qwenignore_auto_blocked[@]}"; do
-                    [[ "$s" == "$b" ]] && already=1 && break
-                done
-                [ $already -eq 0 ] && to_block+=("$s")
-            done
-            echo -e "${GREEN}🔄 Использую сохранённые настройки + $QWENIGNORE_FILE${NC}"
-            if [ ${#to_block[@]} -gt 0 ]; then
-                echo -e "${BLUE}Перекрываются:${NC}"
-                printf '  - %s\n' "${to_block[@]}"
-            else
-                echo -e "${YELLOW}Ничего не перекрывается${NC}"
-            fi
-            echo -e "${YELLOW}Для изменения запустите с --refresh${NC}"
-        fi
+# Entrypoint скрипт (используем реальный путь)
+ENTRYPOINT_SOURCE="$REAL_SCRIPT_DIR/docker-entrypoint.sh"
+if [ -f "$ENTRYPOINT_SOURCE" ]; then
+    VOLUMES+=(-v "$ENTRYPOINT_SOURCE":/usr/local/bin/git-entrypoint.sh:ro)
+else
+    echo -e "${YELLOW}⚠️  Предупреждение: $ENTRYPOINT_SOURCE не найден, entrypoint не будет смонтирован${NC}"
+fi
 
-        if [ ${#to_block[@]} -gt 0 ]; then
-            overlay_opts=$(build_overlay_opts "${to_block[@]}")
-        else
-            overlay_opts=""
-        fi
-    fi
+TMPFS=(--tmpfs /workspace/.npm:mode=755 --tmpfs /workspace/.config:mode=755)
 
-    # --- Системный промпт из AGENTS.md ---
-    AGENTS_FILE="$PROJECT_DIR/AGENTS.md"
-    EXTRA_ARGS=""
-    if [ -f "$AGENTS_FILE" ]; then
-        echo -e "${BLUE}📄 Найден AGENTS.md — загружаю инструкции для AI${NC}"
-        EXTRA_ARGS="-v $AGENTS_FILE:/root/AGENTS.md:ro"
-    fi
+# ----- Запуск -----
+echo -e "${GREEN}🔍 Qwen Code Launcher (прямой запуск)${NC}"
+echo "Проект: $PROJECT_DIR"
 
-    # --- Модель ---
-    MODEL_FILE="$GLOBAL_CONFIG_DIR/model"
-    MODEL_CMD_ARGS=""
-    if [ "$QWEN_MODEL_EXPLICIT" = "1" ]; then
-        # Из переменной окружения (Makefile)
-        MODEL_CMD_ARGS="--model $QWEN_MODEL"
-        echo -e "${BLUE}🤖 Модель (из Makefile): $QWEN_MODEL${NC}"
-    elif [ -f "$MODEL_FILE" ]; then
-        # Из файла (make set-model)
-        MODEL_CMD_ARGS="--model $(cat "$MODEL_FILE")"
-        echo -e "${BLUE}🤖 Модель (из конфига): $(cat "$MODEL_FILE")${NC}"
-    else
-        echo -e "${YELLOW}⚠️  Модель не задана — используется по умолчанию от провайдера${NC}"
-        echo -e "${YELLOW}   Установите: make set-model MODEL=qwen3.6-plus${NC}"
-    fi
+if [ $DEBUG_MODE -eq 1 ]; then
+    echo -e "${YELLOW}🔍 DEBUG: команда запуска:${NC}"
+    echo "docker run --rm -it \\"
+    echo "    $USER_OPTS \\"
+    echo "    --security-opt label=disable --security-opt no-new-privileges:true \\"
+    echo "    ${VOLUMES[@]} \\"
+    echo "    ${TMPFS[@]} \\"
+    echo "    ${GIT_ENVS[@]} \\"
+    echo "    -e QWEN_ALLOW_RUN_IN_HOME=1 \\"
+    echo "    -w /workspace \\"
+    echo "    --entrypoint /usr/local/bin/git-entrypoint.sh \\"
+    echo "    -p ${HOST_PORT}:${CONTAINER_PORT} \\"
+    echo "    $QWEN_IMAGE \\"
+    echo "    qwen ${MODEL_ARGS[@]}"
+    exit 0
+fi
 
-    # --- Глобальные директории (не загрязняют проект) ---
-    # .npm, .config — шареные между всеми проектами
-    GLOBAL_MOUNTS=""
-    GLOBAL_MOUNTS="$GLOBAL_MOUNTS -v $GLOBAL_CONFIG_DIR/npm:/root/.npm"
-    GLOBAL_MOUNTS="$GLOBAL_MOUNTS -v $GLOBAL_CONFIG_DIR/config:/root/.config"
-    GLOBAL_MOUNTS="$GLOBAL_MOUNTS -v $PROJECT_QWEN_DIR:/root/.qwen"
-    # Критическое исправление: монтируем ту же директорию в /workspace/.qwen,
-    # чтобы qwen писал конфиги в неё, а не пытался создать свою в /workspace
-    GLOBAL_MOUNTS="$GLOBAL_MOUNTS -v $PROJECT_QWEN_DIR:/workspace/.qwen"
-
-    # --- Глобальные скиллы (шареные между проектами) ---
-    SKILLS_MOUNT=""
-    if [ -d "$GLOBAL_SKILLS_DIR" ] && [ "$(ls -A "$GLOBAL_SKILLS_DIR" 2>/dev/null)" ]; then
-        echo -e "${BLUE}🧩 Найдены глобальные скиллы — монтирую в контейнер${NC}"
-        SKILLS_MOUNT="-v $GLOBAL_SKILLS_DIR:/root/.qwen/shared-skills:ro"
-    fi
-
-    # --- Git config с хоста (используем массив) ---
-    HOST_GIT_NAME=$(git config --global user.name 2>/dev/null || true)
-    HOST_GIT_EMAIL=$(git config --global user.email 2>/dev/null || true)
-    GIT_ENVS=()
-    if [ -n "$HOST_GIT_NAME" ]; then
-        GIT_ENVS+=(-e "GIT_CONFIG_NAME=$HOST_GIT_NAME")
-    fi
-    if [ -n "$HOST_GIT_EMAIL" ]; then
-        GIT_ENVS+=(-e "GIT_CONFIG_EMAIL=$HOST_GIT_EMAIL")
-    fi
-
-    # Монтируем entrypoint-скрипт для настройки git внутри контейнера
-    ENTRYPOINT_SCRIPT="$PROJECT_DIR/bin/docker-entrypoint.sh"
-    GIT_MOUNT=""
-    if [ -f "$ENTRYPOINT_SCRIPT" ]; then
-        GIT_MOUNT="-v $ENTRYPOINT_SCRIPT:/usr/local/bin/git-entrypoint.sh:ro"
-    fi
-
-    # --- Защита от создания .qwen/.npm/.config в проекте ---
-    # Используем tmpfs для .npm и .config (они не нужны на хосте).
-    # Для .qwen используем монтирование выше, поэтому tmpfs для него не нужен.
-    TMPFS_MOUNTS="--tmpfs /workspace/.npm:mode=755 --tmpfs /workspace/.config:mode=755"
-
-    # --- Подавление предупреждения о home directory ---
-    # Не переопределяем HOME, чтобы qwen не пытался писать в /workspace/.qwen
-    # ENV_SUPPRESS="-e QWEN_ALLOW_RUN_IN_HOME=1"
-    ENV_SUPPRESS="-e QWEN_ALLOW_RUN_IN_HOME=1 -e HOME=/workspace"
-
-    # --- Безопасный запуск ---
-    if [ $DEBUG_MODE -eq 1 ]; then
-        echo -e "${YELLOW}🔍 DEBUG: PROJECT_DIR=$PROJECT_DIR${NC}"
-        echo -e "${YELLOW}🔍 DEBUG: PROJECT_HASH=$PROJECT_HASH${NC}"
-        echo -e "${YELLOW}🔍 DEBUG: PROJECT_QWEN_DIR=$PROJECT_QWEN_DIR${NC}"
-        echo -e "${YELLOW}🔍 DEBUG: overlay_opts='${overlay_opts}'${NC}"
-        echo -e "${YELLOW}🔍 DEBUG: GLOBAL_MOUNTS='${GLOBAL_MOUNTS}'${NC}"
-        echo -e "${YELLOW}🔍 DEBUG: SKILLS_MOUNT='${SKILLS_MOUNT}'${NC}"
-        echo -e "${YELLOW}🔍 DEBUG: EXTRA_ARGS='${EXTRA_ARGS}'${NC}"
-        echo -e "${YELLOW}🔍 DEBUG: USER_OPTS='${USER_OPTS}'${NC}"
-        echo -e "${YELLOW}🔍 DEBUG: GIT_ENVS='${GIT_ENVS[*]}'${NC}"
-        echo -e "${YELLOW}🔍 DEBUG: GIT_MOUNT='${GIT_MOUNT}'${NC}"
-        echo -e "${YELLOW}🔍 DEBUG: TMPFS_MOUNTS='${TMPFS_MOUNTS}'${NC}"
-        echo -e "${YELLOW}🔍 DEBUG: MODEL_CMD_ARGS='${MODEL_CMD_ARGS}'${NC}"
-        echo ""
-        echo -e "${YELLOW}🔍 DEBUG: полная команда docker:${NC}"
-        echo "docker run --rm -it \\"
-        echo "    $USER_OPTS \\"
-        echo "    --security-opt label=disable \\"
-        echo "    --security-opt no-new-privileges:true \\"
-        echo "    -v \"$PROJECT_DIR\":/workspace \\"
-        echo "    ${overlay_opts} \\"
-        echo "    $GLOBAL_MOUNTS \\"
-        echo "    $SKILLS_MOUNT \\"
-        echo "    $GIT_MOUNT \\"
-        echo "    $TMPFS_MOUNTS \\"
-        echo "    ${EXTRA_ARGS} \\"
-        echo "    ${GIT_ENVS[@]} \\"
-        echo "    $ENV_SUPPRESS \\"
-        echo "    -w /workspace \\"
-        echo "    --entrypoint /usr/local/bin/git-entrypoint.sh \\"
-        echo "    -p \"${HOST_PORT}:${CONTAINER_PORT}\" \\"
-        echo "    \"$QWEN_IMAGE\" \\"
-        echo "    \"$QWEN_CMD\" $MODEL_CMD_ARGS"
-        echo ""
-    fi
-
-    echo -e "${BLUE}🚀 Запуск контейнера...${NC}"
-
-    docker run --rm -it \
-        $USER_OPTS \
-        --security-opt label=disable \
-        --security-opt no-new-privileges:true \
-        -v "$PROJECT_DIR":/workspace \
-        ${overlay_opts} \
-        $GLOBAL_MOUNTS \
-        $SKILLS_MOUNT \
-        $GIT_MOUNT \
-        $TMPFS_MOUNTS \
-        ${EXTRA_ARGS} \
-        "${GIT_ENVS[@]}" \
-        $ENV_SUPPRESS \
-        -w /workspace \
-        --entrypoint /usr/local/bin/git-entrypoint.sh \
-        -p "${HOST_PORT}:${CONTAINER_PORT}" \
-        "$QWEN_IMAGE" \
-        "$QWEN_CMD" $MODEL_CMD_ARGS
-}
-
-main "$@"
+exec docker run --rm -it \
+    $USER_OPTS \
+    --security-opt label=disable --security-opt no-new-privileges:true \
+    "${VOLUMES[@]}" \
+    "${TMPFS[@]}" \
+    "${GIT_ENVS[@]}" \
+    -e QWEN_ALLOW_RUN_IN_HOME=1 \
+    -w /workspace \
+    --entrypoint /usr/local/bin/git-entrypoint.sh \
+    -p "${HOST_PORT}:${CONTAINER_PORT}" \
+    "$QWEN_IMAGE" \
+    qwen "${MODEL_ARGS[@]}"

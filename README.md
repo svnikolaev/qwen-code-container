@@ -5,7 +5,7 @@
 1. **Клонируйте проект** в любое место:
 
    ```bash
-   git clone https://github.com/ваш-репозиторий/qwen-code-docker.git ~/dev/qwen-code-docker
+   git clone https://github.com/YOUR_USERNAME/qwen-code-docker.git ~/dev/qwen-code-docker
    cd ~/dev/qwen-code-docker
    ```
 
@@ -37,24 +37,21 @@
 
 ## Как работает защита
 
-- При запуске `qwen` сканирует проект на наличие секретов (`.env`, `*.key`, `secrets/` и т.д.).
-- Файл **`.qwenignore`** в корне проекта — автоматическое перекрытие без вопросов.
-- Для остальных найденных файлов **спрашивает** — скрыть или нет.
-- Выбор запоминается в `~/.config/qwen-code-docker/blocked-paths.json`.
-- `qwen --refresh` — переспросить, `qwen --show-blocked` — показать перекрытые.
+- Файл **`.qwenignore`** в корне проекта — автоматическое перекрытие файлов без вопросов.
+- Все монтирования описаны декларативно в `docker-compose.yml`.
+- Скрипт `bin/qwen-run` — тонкая обёртка (~70 строк), которая вычисляет переменные и вызывает `docker compose run`.
 
 ### Глобальная конфигурация
 
 Все общие данные хранятся в **`~/.config/qwen-code-docker/`** (XDG Base Dir):
 
-| Путь                 | Назначение                            |
-| -------------------- | ------------------------------------- |
-| `qwen/`              | Авторизация и настройки Qwen Code     |
-| `npm/`               | Кэш npm (не загрязняет проект)        |
-| `config/`            | Общие конфиги (не загрязняют проект)  |
-| `skills/`            | Глобальные скиллы для AI-агентов      |
-| `blocked-paths.json` | Выбор перекрытия секретов по проектам |
-| `cmd`                | Кэш команды внутри контейнера         |
+| Путь                | Назначение                           |
+| ------------------- | ------------------------------------ |
+| `projects/<hash>/.qwen/` | Авторизация и настройки Qwen Code (на проект) |
+| `npm/`              | Кэш npm (не загрязняет проект)       |
+| `config/`           | Общие конфиги (не загрязняют проект) |
+| `skills/`           | Глобальные скиллы для AI-агентов     |
+| `model`             | Версия модели по умолчанию           |
 
 Проект остаётся чистым — никаких `.npm/`, `.config/`, `.qwen/` в рабочей директории.
 
@@ -77,20 +74,17 @@ credentials.json
 
 ## Команды
 
-| Команда               | Действие                                 |
-| --------------------- | ---------------------------------------- |
-| `qwen`                | запуск с защитой                         |
-| `qwen --refresh`      | переспросить о перекрытии                |
-| `qwen --show-blocked` | показать перекрытые файлы                |
-| `qwen --model`        | показать текущую модель                  |
-| `make shell`          | bash в контейнере (без защиты)           |
-| `make setup`          | создать config.json (OAuth)              |
-| `make clean`          | удалить `~/.config/qwen-code-docker`     |
-| `make install`        | symlink `qwen` → `~/.local/bin/qwen`     |
-| `make uninstall`      | удалить symlink                          |
-| `make check-deps`     | проверить и установить jq                |
-| `make model`          | показать текущую модель                  |
-| `make set-model`      | установить модель (`MODEL=qwen3.6-plus`) |
+| Команда          | Действие                                 |
+| ---------------- | ---------------------------------------- |
+| `qwen`           | запуск Qwen Code                         |
+| `make shell`     | bash в контейнере (без защиты)           |
+| `make setup`     | создать config.json (OAuth) + шаблоны    |
+| `make clean`     | удалить `~/.config/qwen-code-docker`     |
+| `make install`   | symlink `qwen` → `~/.local/bin/qwen`     |
+| `make uninstall` | удалить symlink                          |
+| `make check-deps`| проверить зависимости (docker, jq)       |
+| `make model`     | показать текущую модель                  |
+| `make set-model` | установить модель (`MODEL=qwen3.6-plus`) |
 
 ## Модель
 
@@ -126,8 +120,34 @@ qwen --model        # проверить
 
 ## Устранение неполадок
 
-**Авторизация не сохраняется** — проверьте `~/.config/qwen-code-docker/qwen/`.
+**Авторизация не сохраняется** — проверьте `~/.config/qwen-code-docker/projects/<hash>/.qwen/`.
 
 **В проекте появились `.npm/` или `.config/`** — удалите их, теперь они монтируются из глобального конфига.
 
 **Миграция** — при первом запуске после обновления `~/.qwen-docker` автоматически перенесётся в `~/.config/qwen-code-docker`.
+
+**Docker compose не находит файл** — убедитесь, что вы в корне проекта (где `docker-compose.yml`).
+
+## Структура проекта
+
+```
+.
+├── docker-compose.yml        # Декларативная конфигурация контейнера
+├── bin/
+│   ├── qwen-run              # Тонкая обёртка над docker compose (~70 строк)
+│   ├── qwen-run.bak          # Старая версия (для истории, можно удалить)
+│   └── docker-entrypoint.sh  # Entry-point: git config + skills
+├── config-templates/
+│   ├── qwen/                 # Шаблоны конфитов Qwen
+│   └── skills/               # Глобальные скиллы
+├── docs/
+│   └── ТЕХНИЧЕСКОЕ_ЗАДАНИЕ.md  # Полное ТЗ и описание реализации
+├── AGENTS.md                 # Инструкции для AI
+├── Makefile                  # Команды управления
+├── .env.example              # Пример переменных окружения
+└── .qwenignore.example       # Пример файла перекрытия
+```
+
+## Лицензия
+
+MIT — см. [LICENSE](LICENSE).

@@ -1,8 +1,6 @@
 #!/bin/bash
-# bin/docker-entrypoint.sh — настраивает git, HOME и shared skills перед запуском qwen
-
-# Переопределяем HOME на /workspace, чтобы qwen не ругался на запуск в домашней директории
-export HOME=/workspace
+# bin/docker-entrypoint.sh — настраивает git и shared skills перед запуском qwen
+# HOME=/workspace уже передан через docker-compose.yml environment
 
 # Если skills нет, а shared-skills есть — создаём symlink
 if [ ! -d "/root/.qwen/skills" ] && [ -d "/root/.qwen/shared-skills" ]; then
