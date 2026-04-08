@@ -1,26 +1,28 @@
-.PHONY: help run shell setup clean install uninstall check-deps pull-image remove-image test-image model set-model
+.PHONY: help run shell shell-root setup clean install uninstall check-deps pull-image remove-image test-image model set-model config-update
 
 # Образ по умолчанию
 IMAGE := ghcr.io/qwenlm/qwen-code:0.14.1
 PROJECT_DIR := $(shell pwd)
 
 # Имя папки с глобальными конфигами
-CONFIG_NAME ?= qwen-code-docker
+CONFIG_NAME ?= qwen-code-container
 CONFIG_DIR := $(HOME)/.config/$(CONFIG_NAME)
 
 # Модель по умолчанию
 QWEN_MODEL ?= qwen3.6-plus
 
-BIN_TARGET := $(HOME)/.local/bin/qdc
+BIN_TARGET := $(HOME)/.local/bin/qcc
 BIN_SOURCE := $(PROJECT_DIR)/bin/qwen-run
 
 help:
 	@echo "Доступные команды:"
 	@echo "  make run             - запустить Qwen Code (docker run)"
-	@echo "  make shell           - запустить bash в контейнере"
+	@echo "  make shell           - запустить bash в контейнере (от текущего пользователя)"
+	@echo "  make shell-root      - подключиться к запущенному qcc (root bash)"
 	@echo "  make setup           - создать базовый config.json (OAuth) + скопировать шаблоны"
+	@echo "  make config-update   - обновить конфиги из config-templates/ (перезаписать изменения)"
 	@echo "  make clean           - удалить ~/.config/$(CONFIG_NAME)"
-	@echo "  make install         - установить 'qdc' в PATH"
+	@echo "  make install         - установить 'qcc' в PATH"
 	@echo "  make uninstall       - удалить symlink из PATH"
 	@echo "  make check-deps      - проверить зависимости (docker, jq)"
 	@echo "  make pull-image      - скачать образ"
@@ -46,6 +48,12 @@ shell:
 	else \
 		RUNTIME_OPTS="--user $(shell id -u):$(shell id -g) --group-add keep-groups"; \
 	fi; \
+	AGENTS_VOL=""; \
+	if [ -f "$(PROJECT_DIR)/AGENTS.md" ]; then \
+		AGENTS_VOL="-v $(PROJECT_DIR)/AGENTS.md:/workspace/.qwen/AGENTS.md:ro"; \
+	elif [ -f "$(CONFIG_DIR)/AGENTS.md" ]; then \
+		AGENTS_VOL="-v $(CONFIG_DIR)/AGENTS.md:/workspace/.qwen/AGENTS.md:ro"; \
+	fi; \
 	docker run --rm -it $$RUNTIME_OPTS \
 		--security-opt label=disable \
 		-v $(PROJECT_DIR):/workspace \
@@ -53,9 +61,14 @@ shell:
 		-v $(CONFIG_DIR)/config:/root/.config \
 		-v $(CONFIG_DIR)/projects/$$PROJECT_HASH/.qwen:/root/.qwen \
 		-v $(CONFIG_DIR)/skills:/root/.qwen/shared-skills:ro \
+		$$AGENTS_VOL \
 		-w /workspace \
 		--entrypoint /bin/bash \
 		$(IMAGE)
+
+shell-root:
+	@echo "🔌 Подключение к запущенному контейнеру qcc (root shell)..."
+	docker exec -it -u root qcc /bin/bash
 
 setup:
 	@PROJECT_HASH=$$(echo -n "$(PROJECT_DIR)" | md5sum | cut -d' ' -f1); \
@@ -82,32 +95,85 @@ clean:
 	@rm -rf $(CONFIG_DIR)
 	@echo "Готово"
 
-install:
-	@echo "🔧 Установка Qwen Code Launcher..."
-	@mkdir -p $(CONFIG_DIR)/npm $(CONFIG_DIR)/config $(CONFIG_DIR)/skills
-	@echo "📁 Конфиги: $(CONFIG_DIR)"
-	@# Копируем скиллы из проекта
-	@if [ -d "config-templates/skills" ] && [ "$$(ls -A config-templates/skills 2>/dev/null)" ]; then \
-		for skill in config-templates/skills/*.md; do \
-			name=$$(basename "$$skill"); \
-			if [ ! -f "$(CONFIG_DIR)/skills/$$name" ]; then \
-				cp "$$skill" "$(CONFIG_DIR)/skills/$$name"; \
-				echo "✅ Скопирован скилл: $$name"; \
+config-update:
+	@echo "🔄 Обновление конфигов из config-templates/..."
+	@# Агент-конфиги → ~/.config/qwen-code-container/
+	@if [ -d "config-templates/agent" ] && [ "$$(ls -A config-templates/agent 2>/dev/null)" ]; then \
+		for f in config-templates/agent/*; do \
+			name=$$(basename "$$f"); \
+			if [ -f "$(CONFIG_DIR)/$$name" ]; then \
+				if ! cmp -s "$$f" "$(CONFIG_DIR)/$$name"; then \
+					cp "$$f" "$(CONFIG_DIR)/$$name"; \
+					echo "✅ Обновлён агент-конфиг: $$name"; \
+				else \
+					echo "📄 $$name без изменений"; \
+				fi; \
 			else \
-				echo "📄 Скилл $$name уже существует"; \
+				cp "$$f" "$(CONFIG_DIR)/$$name"; \
+				echo "✅ Создан агент-конфиг: $$name"; \
+			fi \
+		done; \
+	else \
+		echo "⚠️  Агент-конфиги не найдены"; \
+	fi
+	@# Скиллы → ~/.config/qwen-code-container/skills/
+	@if [ -d "config-templates/skills" ] && [ "$$(ls -A config-templates/skills 2>/dev/null)" ]; then \
+		for f in config-templates/skills/*.md; do \
+			name=$$(basename "$$f"); \
+			if [ -f "$(CONFIG_DIR)/skills/$$name" ]; then \
+				if ! cmp -s "$$f" "$(CONFIG_DIR)/skills/$$name"; then \
+					cp "$$f" "$(CONFIG_DIR)/skills/$$name"; \
+					echo "✅ Обновлён скилл: $$name"; \
+				else \
+					echo "📄 Скилл $$name без изменений"; \
+				fi; \
+			else \
+				cp "$$f" "$(CONFIG_DIR)/skills/$$name"; \
+				echo "✅ Создан скилл: $$name"; \
 			fi \
 		done; \
 	else \
 		echo "⚠️  Скиллы не найдены"; \
 	fi
-	@# Копируем AGENTS.md
-	@if [ -f "AGENTS.md" ]; then \
-		if [ ! -f "$(CONFIG_DIR)/AGENTS.md" ]; then \
-			cp AGENTS.md "$(CONFIG_DIR)/AGENTS.md"; \
-			echo "✅ Скопирован AGENTS.md"; \
-		else \
-			echo "📄 AGENTS.md уже существует"; \
-		fi; \
+	@# Шаблоны проекта → ~/.config/qwen-code-container/projects/<hash>/.qwen/
+	@PROJECT_HASH=$$(echo -n "$(PROJECT_DIR)" | md5sum | cut -d' ' -f1); \
+	if [ -d "config-templates/qwen" ]; then \
+		for f in config-templates/qwen/*; do \
+			name=$$(basename "$$f"); \
+			[ "$$name" = ".gitignore" ] && continue; \
+			dest="$(CONFIG_DIR)/projects/$$PROJECT_HASH/.qwen/$$name"; \
+			if [ -f "$$dest" ]; then \
+				if ! cmp -s "$$f" "$$dest"; then \
+					cp "$$f" "$$dest"; \
+					echo "✅ Обновлён шаблон: $$name"; \
+				else \
+					echo "📄 Шаблон $$name без изменений"; \
+				fi; \
+			else \
+				cp "$$f" "$$dest"; \
+				echo "✅ Создан шаблон: $$name"; \
+			fi \
+		done; \
+	fi
+	@echo "✅ Конфиги обновлены"
+
+install:
+	@echo "🔧 Установка Qwen Code Launcher..."
+	@mkdir -p $(CONFIG_DIR)/npm $(CONFIG_DIR)/config $(CONFIG_DIR)/skills
+	@echo "📁 Конфиги: $(CONFIG_DIR)"
+	@# Копируем агент-конфиги (AGENTS.md и др.)
+	@if [ -d "config-templates/agent" ] && [ "$$(ls -A config-templates/agent 2>/dev/null)" ]; then \
+		for f in config-templates/agent/*; do \
+			name=$$(basename "$$f"); \
+			if [ ! -f "$(CONFIG_DIR)/$$name" ]; then \
+				cp "$$f" "$(CONFIG_DIR)/$$name"; \
+				echo "✅ Скопирован агент-конфиг: $$name"; \
+			else \
+				echo "📄 Агент-конфиг $$name уже существует"; \
+			fi \
+		done; \
+	else \
+		echo "⚠️  Агент-конфиги не найдены"; \
 	fi
 	@# Создаём symlink
 	@mkdir -p $(HOME)/.local/bin
@@ -124,7 +190,7 @@ install:
 	@echo ""
 	@echo "🎉 Убедитесь, что ~/.local/bin в PATH:"
 	@echo '   export PATH="$$HOME/.local/bin:$$PATH"'
-	@echo "🎉 Команда для запуска: qdc"
+	@echo "🎉 Команда для запуска: qcc"
 
 uninstall:
 	@rm -f $(BIN_TARGET)
