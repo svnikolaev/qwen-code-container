@@ -8,7 +8,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # ----- Конфигурация -----
-QWEN_IMAGE="${QWEN_IMAGE:-ghcr.io/qwenlm/qwen-code:0.14.0}"
+QWEN_IMAGE="${QWEN_IMAGE:-ghcr.io/qwenlm/qwen-code:0.14.1}"
 CONFIG_NAME="${QWEN_CONFIG_NAME:-qwen-code-docker}"
 GLOBAL_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/$CONFIG_NAME"
 PROJECT_DIR="$(pwd)"

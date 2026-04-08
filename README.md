@@ -9,7 +9,7 @@
    cd ~/dev/qwen-code-docker
    ```
 
-2. **Установите глобальную команду `qwen`** (один раз):
+2. **Установите глобальную команду `qdc`** (один раз):
 
    ```bash
    make install
@@ -32,7 +32,7 @@
 
    ```bash
    cd ~/my-project
-   qwen
+   qdc
    ```
 
 ## Как работает защита
@@ -76,11 +76,11 @@ credentials.json
 
 | Команда          | Действие                                 |
 | ---------------- | ---------------------------------------- |
-| `qwen`           | запуск Qwen Code                         |
+| `qdc`            | запуск Qwen Code в контейнере            |
 | `make shell`     | bash в контейнере (без защиты)           |
 | `make setup`     | создать config.json (OAuth) + шаблоны    |
 | `make clean`     | удалить `~/.config/qwen-code-docker`     |
-| `make install`   | symlink `qwen` → `~/.local/bin/qwen`     |
+| `make install`   | symlink `qdc` → `~/.local/bin/qdc`       |
 | `make uninstall` | удалить symlink                          |
 | `make check-deps`| проверить зависимости (docker, jq)       |
 | `make model`     | показать текущую модель                  |
@@ -94,7 +94,7 @@ qwen-code — это **клиент**. Модель работает на сер
 ### Как узнать текущую модель
 
 ```bash
-qwen --model        # покажет заданную модель
+qdc --model         # покажет заданную модель
 make model          # то же через make
 ```
 
@@ -102,7 +102,7 @@ make model          # то же через make
 
 ```bash
 make set-model MODEL=qwen3.6-plus
-qwen --model        # проверить
+qdc --model         # проверить
 ```
 
 Модель сохраняется в `~/.config/qwen-code-docker/model` и передаётся как `--model <версия>` при каждом запуске.
