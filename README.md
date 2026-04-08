@@ -5,11 +5,11 @@
 1. **Клонируйте проект** в любое место:
 
    ```bash
-   git clone https://github.com/YOUR_USERNAME/qwen-code-docker.git ~/dev/qwen-code-docker
-   cd ~/dev/qwen-code-docker
+   git clone https://github.com/YOUR_USERNAME/qwen-code-container.git ~/dev/qwen-code-container
+   cd ~/dev/qwen-code-container
    ```
 
-2. **Установите глобальную команду `qdc`** (один раз):
+2. **Установите глобальную команду `qcc`** (один раз):
 
    ```bash
    make install
@@ -32,7 +32,7 @@
 
    ```bash
    cd ~/my-project
-   qdc
+   qcc
    ```
 
 ## Как работает защита
@@ -43,7 +43,7 @@
 
 ### Глобальная конфигурация
 
-Все общие данные хранятся в **`~/.config/qwen-code-docker/`** (XDG Base Dir):
+Все общие данные хранятся в **`~/.config/qwen-code-container/`** (XDG Base Dir):
 
 | Путь                | Назначение                           |
 | ------------------- | ------------------------------------ |
@@ -76,11 +76,12 @@ credentials.json
 
 | Команда          | Действие                                 |
 | ---------------- | ---------------------------------------- |
-| `qdc`            | запуск Qwen Code в контейнере            |
-| `make shell`     | bash в контейнере (без защиты)           |
+| `qcc`            | запуск Qwen Code в контейнере            |
+| `make shell`     | bash в контейнере (от текущего пользователя) |
+| `make shell-root`| подключиться к запущенному qcc (root bash) |
 | `make setup`     | создать config.json (OAuth) + шаблоны    |
-| `make clean`     | удалить `~/.config/qwen-code-docker`     |
-| `make install`   | symlink `qdc` → `~/.local/bin/qdc`       |
+| `make clean`     | удалить `~/.config/qwen-code-container`  |
+| `make install`   | symlink `qcc` → `~/.local/bin/qcc`       |
 | `make uninstall` | удалить symlink                          |
 | `make check-deps`| проверить зависимости (docker, jq)       |
 | `make model`     | показать текущую модель                  |
@@ -94,7 +95,7 @@ qwen-code — это **клиент**. Модель работает на сер
 ### Как узнать текущую модель
 
 ```bash
-qdc --model         # покажет заданную модель
+qcc --model         # покажет заданную модель
 make model          # то же через make
 ```
 
@@ -102,10 +103,10 @@ make model          # то же через make
 
 ```bash
 make set-model MODEL=qwen3.6-plus
-qdc --model         # проверить
+qcc --model         # проверить
 ```
 
-Модель сохраняется в `~/.config/qwen-code-docker/model` и передаётся как `--model <версия>` при каждом запуске.
+Модель сохраняется в `~/.config/qwen-code-container/model` и передаётся как `--model <версия>` при каждом запуске.
 
 ### Как убедиться, что используется последняя версия
 
@@ -120,11 +121,11 @@ qdc --model         # проверить
 
 ## Устранение неполадок
 
-**Авторизация не сохраняется** — проверьте `~/.config/qwen-code-docker/projects/<hash>/.qwen/`.
+**Авторизация не сохраняется** — проверьте `~/.config/qwen-code-container/projects/<hash>/.qwen/`.
 
 **В проекте появились `.npm/` или `.config/`** — удалите их, теперь они монтируются из глобального конфига.
 
-**Миграция** — при первом запуске после обновления `~/.qwen-docker` автоматически перенесётся в `~/.config/qwen-code-docker`.
+**Миграция** — при первом запуске после обновления `~/.qwen-docker` автоматически перенесётся в `~/.config/qwen-code-container`.
 
 **Проблемы с запуском** — убедитесь, что вы в корне проекта (где `Makefile` и `bin/qwen-run`).
 
@@ -137,11 +138,11 @@ qdc --model         # проверить
 ├── container/
 │   └── entrypoint.sh         # Entry-point контейнера: git config + skills
 ├── config-templates/
+│   ├── agent/                # Глобальные конфиги AI-агента
 │   ├── qwen/                 # Шаблоны конфитов Qwen
 │   └── skills/               # Глобальные скиллы
 ├── docs/
 │   └── ТЕХНИЧЕСКОЕ_ЗАДАНИЕ.md  # Полное ТЗ и описание реализации
-├── AGENTS.md                 # Инструкции для AI
 ├── Makefile                  # Команды управления
 ├── .env.example              # Пример переменных окружения
 └── .qwenignore.example       # Пример файла перекрытия

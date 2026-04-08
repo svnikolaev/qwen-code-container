@@ -9,7 +9,7 @@ NC='\033[0m'
 
 # ----- Конфигурация -----
 QWEN_IMAGE="${QWEN_IMAGE:-ghcr.io/qwenlm/qwen-code:0.14.1}"
-CONFIG_NAME="${QWEN_CONFIG_NAME:-qwen-code-docker}"
+CONFIG_NAME="${QWEN_CONFIG_NAME:-qwen-code-container}"
 GLOBAL_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/$CONFIG_NAME"
 PROJECT_DIR="$(pwd)"
 PROJECT_HASH=$(echo -n "$PROJECT_DIR" | md5sum | cut -d' ' -f1)
@@ -51,6 +51,7 @@ mkdir -p "$PROJECT_QWEN_DIR"
 # ----- Копирование скиллов и шаблонов (один раз) -----
 REAL_SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || echo "$0")
 REAL_SCRIPT_DIR=$(dirname "$REAL_SCRIPT_PATH")
+# Скиллы
 if [ -d "$REAL_SCRIPT_DIR/../config-templates/skills" ]; then
     for f in "$REAL_SCRIPT_DIR/../config-templates/skills"/*.md; do
         [ -f "$f" ] || continue
@@ -58,6 +59,15 @@ if [ -d "$REAL_SCRIPT_DIR/../config-templates/skills" ]; then
         [ ! -f "$GLOBAL_CONFIG_DIR/skills/$name" ] && cp "$f" "$GLOBAL_CONFIG_DIR/skills/$name"
     done
 fi
+# Агент-конфиги (AGENTS.md и др.)
+if [ -d "$REAL_SCRIPT_DIR/../config-templates/agent" ]; then
+    for f in "$REAL_SCRIPT_DIR/../config-templates/agent"/*; do
+        [ -f "$f" ] || continue
+        name=$(basename "$f")
+        [ ! -f "$GLOBAL_CONFIG_DIR/$name" ] && cp "$f" "$GLOBAL_CONFIG_DIR/$name"
+    done
+fi
+# Шаблоны проекта
 if [ -d "$REAL_SCRIPT_DIR/../config-templates/qwen" ]; then
     for f in "$REAL_SCRIPT_DIR/../config-templates/qwen"/*; do
         [ -f "$f" ] || continue
@@ -112,7 +122,13 @@ VOLUMES=(
     -v "$PROJECT_QWEN_DIR":/workspace/.qwen
     -v "$GLOBAL_CONFIG_DIR/skills":/root/.qwen/shared-skills:ro
 )
-[ -f "$PROJECT_DIR/AGENTS.md" ] && VOLUMES+=(-v "$PROJECT_DIR/AGENTS.md":/root/AGENTS.md:ro)
+# ----- AGENTS.md (глобальный + локальный override) -----
+# Приоритет: локальный ./AGENTS.md > глобальный ~/.config/qwen-code-container/AGENTS.md
+if [ -f "$PROJECT_DIR/AGENTS.md" ]; then
+    VOLUMES+=(-v "$PROJECT_DIR/AGENTS.md":/root/AGENTS.md:ro)
+elif [ -f "$GLOBAL_CONFIG_DIR/AGENTS.md" ]; then
+    VOLUMES+=(-v "$GLOBAL_CONFIG_DIR/AGENTS.md":/root/AGENTS.md:ro)
+fi
 
 # Entrypoint скрипт (используем реальный путь)
 ENTRYPOINT_SOURCE="$REAL_SCRIPT_DIR/../container/entrypoint.sh"
@@ -146,6 +162,7 @@ if [ $DEBUG_MODE -eq 1 ]; then
 fi
 
 exec docker run --rm -it \
+    --name qcc \
     $USER_OPTS \
     --security-opt label=disable --security-opt no-new-privileges:true \
     "${VOLUMES[@]}" \
