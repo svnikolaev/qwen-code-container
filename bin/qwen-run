@@ -13,7 +13,8 @@ CONFIG_NAME="${QWEN_CONFIG_NAME:-qwen-code-container}"
 GLOBAL_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/$CONFIG_NAME"
 PROJECT_DIR="$(pwd)"
 PROJECT_HASH=$(echo -n "$PROJECT_DIR" | md5sum | cut -d' ' -f1)
-PROJECT_QWEN_DIR="$GLOBAL_CONFIG_DIR/projects/$PROJECT_HASH/.qwen"
+PROJECT_CONFIG_DIR="$GLOBAL_CONFIG_DIR/projects/$PROJECT_HASH"
+PROJECT_QWEN_DIR="$PROJECT_CONFIG_DIR/.qwen"
 HOST_PORT="${HOST_PORT:-5173}"
 CONTAINER_PORT="${CONTAINER_PORT:-5173}"
 QWEN_MODEL="${QWEN_MODEL:-}"
@@ -44,14 +45,16 @@ else
     USER_OPTS="--user $(id -u):$(id -g) --group-add keep-groups"
 fi
 
-# ----- Создание глобальных директорий -----
-mkdir -p "$GLOBAL_CONFIG_DIR"/{npm,config,skills}
-mkdir -p "$PROJECT_QWEN_DIR"
-
-# ----- Копирование скиллов и шаблонов (один раз) -----
 REAL_SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || echo "$0")
 REAL_SCRIPT_DIR=$(dirname "$REAL_SCRIPT_PATH")
-# Скиллы
+
+# ----- Создание глобальных директорий -----
+mkdir -p "$GLOBAL_CONFIG_DIR"/{npm,config,skills}
+mkdir -p "$GLOBAL_CONFIG_DIR/projects"
+mkdir -p "$PROJECT_CONFIG_DIR"
+
+# ----- Инициализация шаблонов (один раз) -----
+# 1. Глобальные скиллы из шаблонов
 if [ -d "$REAL_SCRIPT_DIR/../config-templates/skills" ]; then
     for f in "$REAL_SCRIPT_DIR/../config-templates/skills"/*.md; do
         [ -f "$f" ] || continue
@@ -59,7 +62,7 @@ if [ -d "$REAL_SCRIPT_DIR/../config-templates/skills" ]; then
         [ ! -f "$GLOBAL_CONFIG_DIR/skills/$name" ] && cp "$f" "$GLOBAL_CONFIG_DIR/skills/$name"
     done
 fi
-# Агент-конфиги (AGENTS.md и др.)
+# 2. Глобальные агент-конфиги из шаблонов
 if [ -d "$REAL_SCRIPT_DIR/../config-templates/agent" ]; then
     for f in "$REAL_SCRIPT_DIR/../config-templates/agent"/*; do
         [ -f "$f" ] || continue
@@ -67,8 +70,25 @@ if [ -d "$REAL_SCRIPT_DIR/../config-templates/agent" ]; then
         [ ! -f "$GLOBAL_CONFIG_DIR/$name" ] && cp "$f" "$GLOBAL_CONFIG_DIR/$name"
     done
 fi
-# Шаблоны проекта
+# 3. Проектные скиллы: глобальные → проектные
+if [ -d "$GLOBAL_CONFIG_DIR/skills" ]; then
+    mkdir -p "$PROJECT_CONFIG_DIR/skills"
+    for f in "$GLOBAL_CONFIG_DIR/skills"/*.md; do
+        [ -f "$f" ] || continue
+        name=$(basename "$f")
+        [ ! -f "$PROJECT_CONFIG_DIR/skills/$name" ] && cp "$f" "$PROJECT_CONFIG_DIR/skills/$name"
+    done
+fi
+# 4. Проектные агент-конфиги: глобальные → проектные
+if [ -d "$GLOBAL_CONFIG_DIR" ]; then
+    for f in AGENTS.md; do
+        [ -f "$GLOBAL_CONFIG_DIR/$f" ] || continue
+        [ ! -f "$PROJECT_CONFIG_DIR/$f" ] && cp "$GLOBAL_CONFIG_DIR/$f" "$PROJECT_CONFIG_DIR/$f"
+    done
+fi
+# 5. Шаблоны .qwen
 if [ -d "$REAL_SCRIPT_DIR/../config-templates/qwen" ]; then
+    mkdir -p "$PROJECT_QWEN_DIR"
     for f in "$REAL_SCRIPT_DIR/../config-templates/qwen"/*; do
         [ -f "$f" ] || continue
         name=$(basename "$f")
@@ -118,16 +138,17 @@ VOLUMES=(
     -v "$PROJECT_DIR":/workspace
     -v "$GLOBAL_CONFIG_DIR/npm":/root/.npm
     -v "$GLOBAL_CONFIG_DIR/config":/root/.config
-    -v "$PROJECT_QWEN_DIR":/workspace/.qwen
-    -v "$GLOBAL_CONFIG_DIR/skills":/root/.qwen/shared-skills:ro
-    -v "$GLOBAL_CONFIG_DIR/skills":/workspace/.qwen/skills:ro
 )
-# ----- AGENTS.md (глобальный + локальный override) -----
-# Приоритет: локальный ./AGENTS.md > глобальный ~/.config/qwen-code-container/AGENTS.md
-if [ -f "$PROJECT_DIR/AGENTS.md" ]; then
-    VOLUMES+=(-v "$PROJECT_DIR/AGENTS.md":/root/AGENTS.md:ro)
-elif [ -f "$GLOBAL_CONFIG_DIR/AGENTS.md" ]; then
-    VOLUMES+=(-v "$GLOBAL_CONFIG_DIR/AGENTS.md":/root/AGENTS.md:ro)
+
+# Проектные скиллы и .qwen (rw — можно редактировать)
+if [ -d "$PROJECT_CONFIG_DIR/skills" ]; then
+    VOLUMES+=(-v "$PROJECT_CONFIG_DIR/skills":/workspace/.qwen/skills)
+fi
+VOLUMES+=(-v "$PROJECT_QWEN_DIR":/workspace/.qwen)
+
+# Проектный AGENTS.md (rw — можно редактировать)
+if [ -f "$PROJECT_CONFIG_DIR/AGENTS.md" ]; then
+    VOLUMES+=(-v "$PROJECT_CONFIG_DIR/AGENTS.md":/workspace/AGENTS.md)
 fi
 
 # Entrypoint скрипт (используем реальный путь)
