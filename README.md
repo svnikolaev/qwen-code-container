@@ -1,12 +1,14 @@
-# Qwen Code в Docker — безопасный запуск с защитой секретов
+# Qwen Code Container
+
+Оболочка (launcher) для безопасного запуска AI-ассистента [**Qwen Code**](https://qwen.ai/qwencode) в изолированном контейнере.
 
 ## Быстрый старт
 
 1. **Клонируйте проект** в любое место:
 
    ```bash
-   git clone https://github.com/YOUR_USERNAME/qwen-code-container.git ~/dev/qwen-code-container
-   cd ~/dev/qwen-code-container
+   git clone https://github.com/svnikolaev/qwen-code-container.git
+   cd qwen-code-container
    ```
 
 2. **Установите глобальную команду `qcc`** (один раз):
@@ -15,7 +17,7 @@
    make install
    ```
 
-   Добавьте `~/.local/bin` в PATH:
+   При необходимости добавьте `~/.local/bin` в PATH (обычно уже добавлен):
 
    ```bash
    echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
@@ -37,23 +39,20 @@
 
 ## Как работает защита
 
-- Файл **`.qwenignore`** в корне проекта — автоматическое перекрытие файлов без вопросов.
-- Все монтирования описаны непосредственно в скрипте `bin/qwen-run` (без docker compose).
-- Скрипт `bin/qwen-run` — обёртка (~200 строк), которая вычисляет переменные и запускает `docker run` с правильными монтированиями.
+- Файл **`.qwenignore`** в корне проекта — перечень файлов с чувствительной информацией.
+- Скрипт `bin/qwen-run` — обёртка, которая вычисляет переменные и запускает `docker run` с защитой чувствительных файлов.
 
 ### Глобальная конфигурация
 
-Все общие данные хранятся в **`~/.config/qwen-code-container/`** (XDG Base Dir):
+Все общие данные хранятся в **`~/.config/qwen-code-container/`**:
 
-| Путь                | Назначение                           |
-| ------------------- | ------------------------------------ |
+| Путь                     | Назначение                                    |
+| ------------------------ | --------------------------------------------- |
 | `projects/<hash>/.qwen/` | Авторизация и настройки Qwen Code (на проект) |
-| `npm/`              | Кэш npm (не загрязняет проект)       |
-| `config/`           | Общие конфиги (не загрязняют проект) |
-| `skills/`           | Глобальные скиллы для AI-агентов     |
-| `model`             | Версия модели по умолчанию           |
-
-Проект остаётся чистым — никаких `.npm/`, `.config/`, `.qwen/` в рабочей директории.
+| `npm/`                   | Кэш npm (не загрязняет проект)                |
+| `config/`                | Общие конфиги (не загрязняют проект)          |
+| `skills/`                | Глобальные скиллы для AI-агентов              |
+| `model`                  | Версия модели по умолчанию                    |
 
 ### Системный промпт `AGENTS.md`
 
@@ -74,24 +73,40 @@ credentials.json
 
 ## Команды
 
-| Команда          | Действие                                 |
-| ---------------- | ---------------------------------------- |
-| `qcc`            | запуск Qwen Code в контейнере            |
-| `make shell`     | bash в контейнере (от текущего пользователя) |
-| `make shell-root`| подключиться к запущенному qcc (root shell) |
-| `make setup`     | создать config.json (OAuth) + шаблоны    |
-| `make config-update` | обновить конфиги из шаблонов         |
-| `make clean`     | удалить `~/.config/qwen-code-container`  |
-| `make install`   | symlink `qcc` → `~/.local/bin/qcc`       |
-| `make uninstall` | удалить symlink                          |
-| `make check-deps`| проверить зависимости (docker, jq)       |
-| `make model`     | показать текущую модель                  |
-| `make set-model` | установить модель (`MODEL=qwen3.6-plus`) |
+### Запуск
+
+`qcc` запускается в терминале в директории проекта:
+
+| Команда         | Действие                                |
+| --------------- | --------------------------------------- |
+| `qcc`           | запуск Qwen Code в контейнере           |
+| `qcc --version` | показать версию launcher и образа       |
+| `qcc --help`    | показать справку                        |
+| `qcc --model`   | показать текущую модель                 |
+| `qcc --debug`   | показать команду запуска без выполнения |
+| `make run`      | то же через Makefile                    |
+
+### Управление
+
+`make` запускается в директории проекта Qwen Code Container:
+
+| Команда              | Действие                                     |
+| -------------------- | -------------------------------------------- |
+| `make shell`         | bash в контейнере (от текущего пользователя) |
+| `make shell-root`    | подключиться к запущенному qcc (root shell)  |
+| `make setup`         | создать config.json (OAuth) + шаблоны        |
+| `make config-update` | обновить конфиги из шаблонов                 |
+| `make version`       | показать версию проекта                      |
+| `make clean`         | удалить `~/.config/qwen-code-container`      |
+| `make install`       | symlink `qcc` → `~/.local/bin/qcc`           |
+| `make uninstall`     | удалить symlink                              |
+| `make check-deps`    | проверить зависимости (docker, jq)           |
+| `make model`         | показать текущую модель                      |
+| `make set-model`     | установить модель (`MODEL=qwen3.6-plus`)     |
 
 ## Модель
 
-qwen-code — это **клиент**. Модель работает на сервере провайдера (Google, OpenRouter и т.д.).
-Версия модели **не зависит** от Docker-образа.
+qwen-code — это **клиент**. Модель работает на сервере провайдера Qwen.
 
 ### Как узнать текущую модель
 
@@ -103,7 +118,7 @@ make model          # то же через make
 ### Как установить модель
 
 ```bash
-make set-model MODEL=qwen3.6-plus
+make set-model MODEL=qwen-coder
 qcc --model         # проверить
 ```
 
@@ -112,8 +127,8 @@ qcc --model         # проверить
 ### Как убедиться, что используется последняя версия
 
 1. Проверить актуальную версию на [qwen.ai](https://qwen.ai) или в [блоге Qwen](https://qwenlm.github.io/)
-2. Установить: `make set-model MODEL=qwen3.6-plus`
-3. При выходе новой версии — обновить: `make set-model MODEL=qwen3.7-plus`
+2. Установить: `make set-model MODEL=qwen-coder`
+3. При выходе новой версии — обновить: `make set-model MODEL=qwen-coder-new`
 
 ## Требования
 
@@ -133,16 +148,17 @@ qcc --model         # проверить
 ```
 .
 ├── bin/
-│   └── qwen-run              # Тонкая обёртка над docker run (~120 строк)
+│   └── qwen-run              # Тонкая обёртка над docker run (~220 строк)
 ├── container/
 │   └── entrypoint.sh         # Entry-point контейнера: git config + skills
 ├── config-templates/
 │   ├── agent/                # Глобальные конфиги AI-агента
-│   ├── qwen/                 # Шаблоны конфитов Qwen
+│   ├── qwen/                 # Шаблоны конфигов Qwen
 │   └── skills/               # Глобальные скиллы
 ├── docs/
 │   └── ТЕХНИЧЕСКОЕ_ЗАДАНИЕ.md  # Полное ТЗ и описание реализации
 ├── Makefile                  # Команды управления
+├── VERSION                   # Текущая версия проекта
 ├── .env.example              # Пример переменных окружения
 └── .qwenignore.example       # Пример файла перекрытия
 ```

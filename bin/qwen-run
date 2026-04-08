@@ -8,6 +8,10 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # ----- Конфигурация -----
+_RESOLVED="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$_RESOLVED")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+VERSION=$(cat "$PROJECT_ROOT/VERSION" 2>/dev/null || echo "unknown")
 QWEN_IMAGE="${QWEN_IMAGE:-ghcr.io/qwenlm/qwen-code:0.14.1}"
 CONFIG_NAME="${QWEN_CONFIG_NAME:-qwen-code-container}"
 GLOBAL_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/$CONFIG_NAME"
@@ -25,6 +29,29 @@ DEBUG_MODE=0
 if [ "${1:-}" = "--debug" ]; then
     DEBUG_MODE=1
     shift
+fi
+if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-v" ]; then
+    echo "qcc v$VERSION (образ: $QWEN_IMAGE)"
+    exit 0
+fi
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    echo "Qwen Code Launcher v$VERSION"
+    echo ""
+    echo "Использование: qcc [опции]"
+    echo ""
+    echo "Опции:"
+    echo "  --help, -h       Показать справку"
+    echo "  --version, -v    Показать версию"
+    echo "  --model          Показать текущую модель"
+    echo "  --debug          Показать команду запуска без выполнения"
+    echo ""
+    echo "Переменные окружения:"
+    echo "  QWEN_IMAGE     Docker-образ (по умолчанию: ghcr.io/qwenlm/qwen-code:0.14.1)"
+    echo "  QWEN_MODEL     Модель для AI (по умолчанию: из ~/.config/.../model)"
+    echo "  HOST_PORT      Порт на хосте (по умолчанию: 5173)"
+    echo ""
+    echo "Документация: https://github.com/qwenlm/qwen-code"
+    exit 0
 fi
 if [ "${1:-}" = "--model" ]; then
     # Показать модель и выйти
@@ -45,9 +72,6 @@ else
     USER_OPTS="--user $(id -u):$(id -g) --group-add keep-groups"
 fi
 
-REAL_SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || echo "$0")
-REAL_SCRIPT_DIR=$(dirname "$REAL_SCRIPT_PATH")
-
 # ----- Создание глобальных директорий -----
 mkdir -p "$GLOBAL_CONFIG_DIR"/{npm,config,skills}
 mkdir -p "$GLOBAL_CONFIG_DIR/projects"
@@ -55,16 +79,16 @@ mkdir -p "$PROJECT_CONFIG_DIR"
 
 # ----- Инициализация шаблонов (один раз) -----
 # 1. Глобальные скиллы из шаблонов
-if [ -d "$REAL_SCRIPT_DIR/../config-templates/skills" ]; then
-    for f in "$REAL_SCRIPT_DIR/../config-templates/skills"/*.md; do
+if [ -d "$SCRIPT_DIR/../config-templates/skills" ]; then
+    for f in "$SCRIPT_DIR/../config-templates/skills"/*.md; do
         [ -f "$f" ] || continue
         name=$(basename "$f")
         [ ! -f "$GLOBAL_CONFIG_DIR/skills/$name" ] && cp "$f" "$GLOBAL_CONFIG_DIR/skills/$name"
     done
 fi
 # 2. Глобальные агент-конфиги из шаблонов
-if [ -d "$REAL_SCRIPT_DIR/../config-templates/agent" ]; then
-    for f in "$REAL_SCRIPT_DIR/../config-templates/agent"/*; do
+if [ -d "$SCRIPT_DIR/../config-templates/agent" ]; then
+    for f in "$SCRIPT_DIR/../config-templates/agent"/*; do
         [ -f "$f" ] || continue
         name=$(basename "$f")
         [ ! -f "$GLOBAL_CONFIG_DIR/$name" ] && cp "$f" "$GLOBAL_CONFIG_DIR/$name"
@@ -87,9 +111,9 @@ if [ -d "$GLOBAL_CONFIG_DIR" ]; then
     done
 fi
 # 5. Шаблоны .qwen
-if [ -d "$REAL_SCRIPT_DIR/../config-templates/qwen" ]; then
+if [ -d "$SCRIPT_DIR/../config-templates/qwen" ]; then
     mkdir -p "$PROJECT_QWEN_DIR"
-    for f in "$REAL_SCRIPT_DIR/../config-templates/qwen"/*; do
+    for f in "$SCRIPT_DIR/../config-templates/qwen"/*; do
         [ -f "$f" ] || continue
         name=$(basename "$f")
         [[ "$name" == ".gitignore" ]] && continue
@@ -152,7 +176,7 @@ if [ -f "$PROJECT_CONFIG_DIR/AGENTS.md" ]; then
 fi
 
 # Entrypoint скрипт (используем реальный путь)
-ENTRYPOINT_SOURCE="$REAL_SCRIPT_DIR/../container/entrypoint.sh"
+ENTRYPOINT_SOURCE="$SCRIPT_DIR/../container/entrypoint.sh"
 if [ -f "$ENTRYPOINT_SOURCE" ]; then
     VOLUMES+=(-v "$ENTRYPOINT_SOURCE":/usr/local/bin/git-entrypoint.sh:ro)
 else
