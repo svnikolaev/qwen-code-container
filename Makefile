@@ -1,8 +1,11 @@
-.PHONY: help run shell shell-root setup clean install uninstall check-deps pull-image remove-image test-image model set-model config-update
+.PHONY: help run shell shell-root setup clean install uninstall check-deps pull-image remove-image test-image model set-model config-update version
 
 # Образ по умолчанию
 IMAGE := ghcr.io/qwenlm/qwen-code:0.14.1
 PROJECT_DIR := $(shell pwd)
+
+# Версия проекта
+VERSION := $(shell cat $(PROJECT_DIR)/VERSION 2>/dev/null || echo "unknown")
 
 # Имя папки с глобальными конфигами
 CONFIG_NAME ?= qwen-code-container
@@ -15,6 +18,8 @@ BIN_TARGET := $(HOME)/.local/bin/qcc
 BIN_SOURCE := $(PROJECT_DIR)/bin/qwen-run
 
 help:
+	@echo "Qwen Code Container launcher v$(VERSION)"
+	@echo ""
 	@echo "Доступные команды:"
 	@echo "  make run             - запустить Qwen Code (docker run)"
 	@echo "  make shell           - запустить bash в контейнере (от текущего пользователя)"
@@ -27,12 +32,16 @@ help:
 	@echo "  make check-deps      - проверить зависимости (docker, jq)"
 	@echo "  make pull-image      - скачать образ"
 	@echo "  make remove-image    - удалить образ"
+	@echo "  make version         - показать версию"
 	@echo "  make model           - показать текущую модель"
 	@echo "  make set-model       - установить модель (make set-model MODEL=qwen3.6-plus)"
 	@echo ""
 	@echo "Переменные:"
 	@echo "  CONFIG_NAME=$(CONFIG_NAME)   - имя папки конфигов в ~/.config/"
 	@echo "  QWEN_MODEL=$(QWEN_MODEL)     - модель для AI"
+
+version:
+	@echo "v$(VERSION)"
 
 run:
 	@chmod +x bin/qwen-run 2>/dev/null || true
