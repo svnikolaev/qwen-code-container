@@ -118,9 +118,9 @@ VOLUMES=(
     -v "$PROJECT_DIR":/workspace
     -v "$GLOBAL_CONFIG_DIR/npm":/root/.npm
     -v "$GLOBAL_CONFIG_DIR/config":/root/.config
-    -v "$PROJECT_QWEN_DIR":/root/.qwen
     -v "$PROJECT_QWEN_DIR":/workspace/.qwen
     -v "$GLOBAL_CONFIG_DIR/skills":/root/.qwen/shared-skills:ro
+    -v "$GLOBAL_CONFIG_DIR/skills":/workspace/.qwen/skills:ro
 )
 # ----- AGENTS.md (глобальный + локальный override) -----
 # Приоритет: локальный ./AGENTS.md > глобальный ~/.config/qwen-code-container/AGENTS.md
