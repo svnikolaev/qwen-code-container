@@ -115,7 +115,7 @@ VOLUMES=(
 [ -f "$PROJECT_DIR/AGENTS.md" ] && VOLUMES+=(-v "$PROJECT_DIR/AGENTS.md":/root/AGENTS.md:ro)
 
 # Entrypoint скрипт (используем реальный путь)
-ENTRYPOINT_SOURCE="$REAL_SCRIPT_DIR/docker-entrypoint.sh"
+ENTRYPOINT_SOURCE="$REAL_SCRIPT_DIR/../container/entrypoint.sh"
 if [ -f "$ENTRYPOINT_SOURCE" ]; then
     VOLUMES+=(-v "$ENTRYPOINT_SOURCE":/usr/local/bin/git-entrypoint.sh:ro)
 else
