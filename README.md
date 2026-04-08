@@ -133,9 +133,9 @@ qdc --model         # проверить
 ```
 .
 ├── bin/
-│   ├── qwen-run              # Тонкая обёртка над docker run (~120 строк)
-│   ├── qwen-run.bak          # Старая версия (для истории, можно удалить)
-│   └── docker-entrypoint.sh  # Entry-point: git config + skills
+│   └── qwen-run              # Тонкая обёртка над docker run (~120 строк)
+├── container/
+│   └── entrypoint.sh         # Entry-point контейнера: git config + skills
 ├── config-templates/
 │   ├── qwen/                 # Шаблоны конфитов Qwen
 │   └── skills/               # Глобальные скиллы

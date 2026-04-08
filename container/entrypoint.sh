@@ -1,5 +1,5 @@
 #!/bin/bash
-# bin/docker-entrypoint.sh — настраивает git и shared skills перед запуском qwen
+# container/entrypoint.sh — настраивает git и shared skills перед запуском qwen
 
 # Если skills нет, а shared-skills есть — создаём symlink
 if [ ! -d "/root/.qwen/skills" ] && [ -d "/root/.qwen/shared-skills" ]; then

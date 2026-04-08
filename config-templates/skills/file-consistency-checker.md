@@ -16,7 +16,7 @@
 
 ```bash
 # Основные файлы проекта
-for f in Makefile README.md AGENTS.md .gitignore .env.example bin/qwen-run bin/docker-entrypoint.sh; do
+for f in Makefile README.md AGENTS.md .gitignore .env.example bin/qwen-run container/entrypoint.sh; do
     [ -f "$f" ] && echo "✅ $f" || echo "❌ $f MISSING"
 done
 ```
@@ -27,7 +27,7 @@ done
 
 ```bash
 bash -n bin/qwen-run && echo "✅ qwen-run syntax OK" || echo "❌ qwen-run syntax error"
-bash -n bin/docker-entrypoint.sh && echo "✅ entrypoint syntax OK" || echo "❌ entrypoint syntax error"
+bash -n container/entrypoint.sh && echo "✅ entrypoint syntax OK" || echo "❌ entrypoint syntax error"
 ```
 
 ### 3. Консистентность Makefile
@@ -37,7 +37,7 @@ bash -n bin/docker-entrypoint.sh && echo "✅ entrypoint syntax OK" || echo "❌
 ```bash
 # Проверь, что bin/qwen-run исполняемый
 [ -x bin/qwen-run ] && echo "✅ qwen-run executable" || echo "❌ qwen-run not executable"
-[ -x bin/docker-entrypoint.sh ] && echo "✅ entrypoint executable" || echo "❌ entrypoint not executable"
+[ -x container/entrypoint.sh ] && echo "✅ entrypoint executable" || echo "❌ entrypoint not executable"
 ```
 
 ### 4. Пары «объявление → файл»
@@ -73,7 +73,7 @@ git diff --stat
 
 | Проблема | Действие |
 |----------|----------|
-| Файл не исполняемый | `chmod +x bin/qwen-run bin/docker-entrypoint.sh` |
+| Файл не исполняемый | `chmod +x bin/qwen-run container/entrypoint.sh` |
 | Синтаксическая ошибка | Прочитать файл, найти незакрытые кавычки/скобки |
 | Файл отсутствует | Восстановить из последнего коммита или переписать |
 | Рассинхрон Makefile ↔ скрипт | Обновить Makefile или скрипт |
