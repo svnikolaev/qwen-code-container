@@ -11,7 +11,13 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Конфигурация
-QWEN_IMAGE="${QWEN_IMAGE:-ghcr.io/qwenlm/qwen-code:latest}"
+QWEN_IMAGE="${QWEN_IMAGE:-ghcr.io/qwenlm/qwen-code:0.14.0}"
+
+# Флаг: модель задана явно (из Makefile) или используется дефолт
+QWEN_MODEL_EXPLICIT="${QWEN_MODEL_EXPLICIT:-0}"
+if [ "$QWEN_MODEL_EXPLICIT" = "1" ]; then
+    QWEN_MODEL="${QWEN_MODEL:-qwen3.6-plus}"
+fi
 
 # Глобальный конфиг (XDG Base Dir)
 CONFIG_NAME="${QWEN_CONFIG_NAME:-qwen-code-docker}"
@@ -76,7 +82,7 @@ detect_runtime() {
 build_user_opts() {
     local runtime="$1"
     if [[ "$runtime" == "podman" ]]; then
-        echo "--userns=keep-id"
+        echo "--userns=keep-id --group-add keep-groups"
     else
         echo "--user $(id -u):$(id -g) --group-add keep-groups"
     fi
@@ -295,10 +301,10 @@ main() {
     # --model: показать модель и выйти
     if [ $SHOW_MODEL -eq 1 ]; then
         MODEL_FILE="$GLOBAL_CONFIG_DIR/model"
-        if [ -n "$QWEN_MODEL" ]; then
-            echo -e "🤖 Модель (окружение): ${BLUE}$QWEN_MODEL${NC}"
+        if [ "$QWEN_MODEL_EXPLICIT" = "1" ]; then
+            echo -e "🤖 Модель (из Makefile): ${BLUE}$QWEN_MODEL${NC}"
         elif [ -f "$MODEL_FILE" ]; then
-            echo -e "🤖 Модель (конфиг): ${BLUE}$(cat "$MODEL_FILE")${NC}"
+            echo -e "🤖 Модель (из конфига): ${BLUE}$(cat "$MODEL_FILE")${NC}"
         else
             echo -e "${YELLOW}⚠️  Модель не задана (по умолчанию от провайдера)${NC}"
         fi
@@ -308,13 +314,12 @@ main() {
     # Миграция старого конфига
     migrate_config
 
-    # Инициализация глобального конфига
+    # Инициализация глобального конфига — только создание директорий, без chown/chmod
     mkdir -p "$GLOBAL_CONFIG_DIR"
     mkdir -p "$GLOBAL_CONFIG_DIR/npm"
     mkdir -p "$GLOBAL_CONFIG_DIR/config"
     mkdir -p "$GLOBAL_CONFIG_DIR/skills"
     mkdir -p "$PROJECT_QWEN_DIR"
-    chown -R "$(id -u):$(id -g)" "$GLOBAL_CONFIG_DIR" 2>/dev/null || true
 
     # Копируем скиллы из проекта в глобальные (шареные)
     PROJECT_CONFIG_DIR="$PROJECT_DIR/config-templates"
@@ -487,10 +492,10 @@ main() {
     # --- Модель ---
     MODEL_FILE="$GLOBAL_CONFIG_DIR/model"
     MODEL_CMD_ARGS=""
-    if [ -n "$QWEN_MODEL" ]; then
+    if [ "$QWEN_MODEL_EXPLICIT" = "1" ]; then
         # Из переменной окружения (Makefile)
         MODEL_CMD_ARGS="--model $QWEN_MODEL"
-        echo -e "${BLUE}🤖 Модель (из окружения): $QWEN_MODEL${NC}"
+        echo -e "${BLUE}🤖 Модель (из Makefile): $QWEN_MODEL${NC}"
     elif [ -f "$MODEL_FILE" ]; then
         # Из файла (make set-model)
         MODEL_CMD_ARGS="--model $(cat "$MODEL_FILE")"
@@ -505,28 +510,27 @@ main() {
     GLOBAL_MOUNTS=""
     GLOBAL_MOUNTS="$GLOBAL_MOUNTS -v $GLOBAL_CONFIG_DIR/npm:/root/.npm"
     GLOBAL_MOUNTS="$GLOBAL_MOUNTS -v $GLOBAL_CONFIG_DIR/config:/root/.config"
-
-    # .qwen — проектно-специфичная (auth, настройки проекта)
-    mkdir -p "$PROJECT_QWEN_DIR"
     GLOBAL_MOUNTS="$GLOBAL_MOUNTS -v $PROJECT_QWEN_DIR:/root/.qwen"
+    # Критическое исправление: монтируем ту же директорию в /workspace/.qwen,
+    # чтобы qwen писал конфиги в неё, а не пытался создать свою в /workspace
+    GLOBAL_MOUNTS="$GLOBAL_MOUNTS -v $PROJECT_QWEN_DIR:/workspace/.qwen"
 
     # --- Глобальные скиллы (шареные между проектами) ---
     SKILLS_MOUNT=""
     if [ -d "$GLOBAL_SKILLS_DIR" ] && [ "$(ls -A "$GLOBAL_SKILLS_DIR" 2>/dev/null)" ]; then
         echo -e "${BLUE}🧩 Найдены глобальные скиллы — монтирую в контейнер${NC}"
-        # Монтируем в shared-skills, entrypoint создаст symlink если skills нет
         SKILLS_MOUNT="-v $GLOBAL_SKILLS_DIR:/root/.qwen/shared-skills:ro"
     fi
 
-    # --- Git config с хоста ---
+    # --- Git config с хоста (используем массив) ---
     HOST_GIT_NAME=$(git config --global user.name 2>/dev/null || true)
     HOST_GIT_EMAIL=$(git config --global user.email 2>/dev/null || true)
-    GIT_ENVS=""
+    GIT_ENVS=()
     if [ -n "$HOST_GIT_NAME" ]; then
-        GIT_ENVS="$GIT_ENVS -e GIT_CONFIG_NAME=\"$HOST_GIT_NAME\""
+        GIT_ENVS+=(-e "GIT_CONFIG_NAME=$HOST_GIT_NAME")
     fi
     if [ -n "$HOST_GIT_EMAIL" ]; then
-        GIT_ENVS="$GIT_ENVS -e GIT_CONFIG_EMAIL=\"$HOST_GIT_EMAIL\""
+        GIT_ENVS+=(-e "GIT_CONFIG_EMAIL=$HOST_GIT_EMAIL")
     fi
 
     # Монтируем entrypoint-скрипт для настройки git внутри контейнера
@@ -537,12 +541,13 @@ main() {
     fi
 
     # --- Защита от создания .qwen/.npm/.config в проекте ---
-    # qwen может создавать эти директории в /workspace, несмотря на маунты в /root.
-    # Монтируем tmpfs — они существуют только в RAM контейнера и не попадают на хост.
-    TMPFS_MOUNTS="--tmpfs /workspace/.qwen:mode=755 --tmpfs /workspace/.npm:mode=755 --tmpfs /workspace/.config:mode=755"
+    # Используем tmpfs для .npm и .config (они не нужны на хосте).
+    # Для .qwen используем монтирование выше, поэтому tmpfs для него не нужен.
+    TMPFS_MOUNTS="--tmpfs /workspace/.npm:mode=755 --tmpfs /workspace/.config:mode=755"
 
     # --- Подавление предупреждения о home directory ---
-    # Qwen Code warns when running in $HOME. Override HOME to /workspace and set suppress flag.
+    # Не переопределяем HOME, чтобы qwen не пытался писать в /workspace/.qwen
+    # ENV_SUPPRESS="-e QWEN_ALLOW_RUN_IN_HOME=1"
     ENV_SUPPRESS="-e QWEN_ALLOW_RUN_IN_HOME=1 -e HOME=/workspace"
 
     # --- Безопасный запуск ---
@@ -555,7 +560,7 @@ main() {
         echo -e "${YELLOW}🔍 DEBUG: SKILLS_MOUNT='${SKILLS_MOUNT}'${NC}"
         echo -e "${YELLOW}🔍 DEBUG: EXTRA_ARGS='${EXTRA_ARGS}'${NC}"
         echo -e "${YELLOW}🔍 DEBUG: USER_OPTS='${USER_OPTS}'${NC}"
-        echo -e "${YELLOW}🔍 DEBUG: GIT_ENVS='${GIT_ENVS}'${NC}"
+        echo -e "${YELLOW}🔍 DEBUG: GIT_ENVS='${GIT_ENVS[*]}'${NC}"
         echo -e "${YELLOW}🔍 DEBUG: GIT_MOUNT='${GIT_MOUNT}'${NC}"
         echo -e "${YELLOW}🔍 DEBUG: TMPFS_MOUNTS='${TMPFS_MOUNTS}'${NC}"
         echo -e "${YELLOW}🔍 DEBUG: MODEL_CMD_ARGS='${MODEL_CMD_ARGS}'${NC}"
@@ -572,7 +577,7 @@ main() {
         echo "    $GIT_MOUNT \\"
         echo "    $TMPFS_MOUNTS \\"
         echo "    ${EXTRA_ARGS} \\"
-        echo "    $GIT_ENVS \\"
+        echo "    ${GIT_ENVS[@]} \\"
         echo "    $ENV_SUPPRESS \\"
         echo "    -w /workspace \\"
         echo "    --entrypoint /usr/local/bin/git-entrypoint.sh \\"
@@ -595,7 +600,7 @@ main() {
         $GIT_MOUNT \
         $TMPFS_MOUNTS \
         ${EXTRA_ARGS} \
-        $GIT_ENVS \
+        "${GIT_ENVS[@]}" \
         $ENV_SUPPRESS \
         -w /workspace \
         --entrypoint /usr/local/bin/git-entrypoint.sh \

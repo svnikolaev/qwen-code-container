@@ -1,7 +1,7 @@
 .PHONY: help run refresh show-blocked shell setup clean install uninstall check-deps pull-image remove-image test-image debug
 
 # Образ по умолчанию
-IMAGE := ghcr.io/qwenlm/qwen-code:latest
+IMAGE := ghcr.io/qwenlm/qwen-code:0.14.0
 PROJECT_DIR := $(shell pwd)
 
 # Имя папки с глобальными конфигами (можно переопределить: make CONFIG_NAME=my-qwen install)
@@ -79,23 +79,23 @@ check-deps:
 
 run:
 	@chmod +x bin/qwen-run 2>/dev/null || true
-	@QWEN_IMAGE="$(IMAGE)" QWEN_CONFIG_NAME="$(CONFIG_NAME)" QWEN_MODEL="$(QWEN_MODEL)" ./bin/qwen-run
+	@QWEN_IMAGE="$(IMAGE)" QWEN_CONFIG_NAME="$(CONFIG_NAME)" QWEN_MODEL="$(QWEN_MODEL)" QWEN_MODEL_EXPLICIT=1 ./bin/qwen-run
 
 debug:
 	@chmod +x bin/qwen-run 2>/dev/null || true
-	@QWEN_IMAGE="$(IMAGE)" QWEN_CONFIG_NAME="$(CONFIG_NAME)" QWEN_MODEL="$(QWEN_MODEL)" ./bin/qwen-run --debug
+	@QWEN_IMAGE="$(IMAGE)" QWEN_CONFIG_NAME="$(CONFIG_NAME)" QWEN_MODEL="$(QWEN_MODEL)" QWEN_MODEL_EXPLICIT=1 ./bin/qwen-run --debug
 
 refresh:
 	@chmod +x bin/qwen-run 2>/dev/null || true
-	@QWEN_IMAGE="$(IMAGE)" QWEN_CONFIG_NAME="$(CONFIG_NAME)" QWEN_MODEL="$(QWEN_MODEL)" ./bin/qwen-run --refresh
+	@QWEN_IMAGE="$(IMAGE)" QWEN_CONFIG_NAME="$(CONFIG_NAME)" QWEN_MODEL="$(QWEN_MODEL)" QWEN_MODEL_EXPLICIT=1 ./bin/qwen-run --refresh
 
 show-blocked:
 	@chmod +x bin/qwen-run 2>/dev/null || true
-	@QWEN_IMAGE="$(IMAGE)" QWEN_CONFIG_NAME="$(CONFIG_NAME)" QWEN_MODEL="$(QWEN_MODEL)" ./bin/qwen-run --show-blocked
+	@QWEN_IMAGE="$(IMAGE)" QWEN_CONFIG_NAME="$(CONFIG_NAME)" QWEN_MODEL="$(QWEN_MODEL)" QWEN_MODEL_EXPLICIT=1 ./bin/qwen-run --show-blocked
 
 model:
 	@chmod +x bin/qwen-run 2>/dev/null || true
-	@QWEN_CONFIG_NAME="$(CONFIG_NAME)" QWEN_MODEL="$(QWEN_MODEL)" ./bin/qwen-run --model
+	@QWEN_CONFIG_NAME="$(CONFIG_NAME)" QWEN_MODEL="$(QWEN_MODEL)" QWEN_MODEL_EXPLICIT=1 ./bin/qwen-run --model
 
 shell:
 	@mkdir -p $(CONFIG_DIR)/npm $(CONFIG_DIR)/config $(CONFIG_DIR)/skills
