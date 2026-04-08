@@ -1,7 +1,7 @@
 .PHONY: help run shell setup clean install uninstall check-deps pull-image remove-image test-image model set-model
 
 # Образ по умолчанию
-IMAGE := ghcr.io/qwenlm/qwen-code:0.14.0
+IMAGE := ghcr.io/qwenlm/qwen-code:0.14.1
 PROJECT_DIR := $(shell pwd)
 
 # Имя папки с глобальными конфигами
@@ -11,16 +11,16 @@ CONFIG_DIR := $(HOME)/.config/$(CONFIG_NAME)
 # Модель по умолчанию
 QWEN_MODEL ?= qwen3.6-plus
 
-BIN_TARGET := $(HOME)/.local/bin/qwen
+BIN_TARGET := $(HOME)/.local/bin/qdc
 BIN_SOURCE := $(PROJECT_DIR)/bin/qwen-run
 
 help:
 	@echo "Доступные команды:"
-	@echo "  make run             - запустить Qwen Code (docker compose)"
+	@echo "  make run             - запустить Qwen Code (docker run)"
 	@echo "  make shell           - запустить bash в контейнере"
 	@echo "  make setup           - создать базовый config.json (OAuth) + скопировать шаблоны"
 	@echo "  make clean           - удалить ~/.config/$(CONFIG_NAME)"
-	@echo "  make install         - установить 'qwen' в PATH"
+	@echo "  make install         - установить 'qdc' в PATH"
 	@echo "  make uninstall       - удалить symlink из PATH"
 	@echo "  make check-deps      - проверить зависимости (docker, jq)"
 	@echo "  make pull-image      - скачать образ"
@@ -124,6 +124,7 @@ install:
 	@echo ""
 	@echo "🎉 Убедитесь, что ~/.local/bin в PATH:"
 	@echo '   export PATH="$$HOME/.local/bin:$$PATH"'
+	@echo "🎉 Команда для запуска: qdc"
 
 uninstall:
 	@rm -f $(BIN_TARGET)
