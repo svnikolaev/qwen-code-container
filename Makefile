@@ -188,26 +188,34 @@ install:
 	else \
 		echo "⚠️  Агент-конфиги не найдены"; \
 	fi
-	@# Создаём symlink
-	@mkdir -p $(HOME)/.local/bin
-	@if [ -L "$(BIN_TARGET)" ] && [ "$$(readlink -f "$(BIN_TARGET)")" = "$$(readlink -f "$(BIN_SOURCE)")" ]; then \
-		echo "✅ Ссылка уже существует: $(BIN_TARGET)"; \
-	elif [ -f "$(BIN_TARGET)" ] || [ -L "$(BIN_TARGET)" ]; then \
-		rm -f "$(BIN_TARGET)"; \
-		ln -s "$(BIN_SOURCE)" "$(BIN_TARGET)"; \
-		echo "✅ Обновлена ссылка: $(BIN_TARGET)"; \
+	@# Определяем куда линковать: macOS → /usr/local/bin, Linux → ~/.local/bin
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		INSTALL_DIR="/usr/local/bin"; \
+		mkdir -p "$$INSTALL_DIR"; \
 	else \
-		ln -s "$(BIN_SOURCE)" "$(BIN_TARGET)"; \
-		echo "✅ Создана ссылка: $(BIN_TARGET)"; \
+		INSTALL_DIR="$(HOME)/.local/bin"; \
+		mkdir -p "$$INSTALL_DIR"; \
+	fi; \
+	BIN_TARGET="$$INSTALL_DIR/qcc"; \
+	if [ -L "$$BIN_TARGET" ] && [ "$$(readlink -f "$$BIN_TARGET")" = "$$(readlink -f "$(BIN_SOURCE)")" ]; then \
+		echo "✅ Ссылка уже существует: $$BIN_TARGET"; \
+	elif [ -f "$$BIN_TARGET" ] || [ -L "$$BIN_TARGET" ]; then \
+		rm -f "$$BIN_TARGET"; \
+		ln -s "$(BIN_SOURCE)" "$$BIN_TARGET"; \
+		echo "✅ Обновлена ссылка: $$BIN_TARGET"; \
+	else \
+		ln -s "$(BIN_SOURCE)" "$$BIN_TARGET"; \
+		echo "✅ Создана ссылка: $$BIN_TARGET"; \
 	fi
 	@echo ""
-	@echo "🎉 Убедитесь, что ~/.local/bin в PATH:"
-	@echo '   export PATH="$$HOME/.local/bin:$$PATH"'
 	@echo "🎉 Команда для запуска: qcc"
 
 uninstall:
-	@rm -f $(BIN_TARGET)
-	@echo "✅ Удалено: $(BIN_TARGET)"
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		rm -f /usr/local/bin/qcc && echo "✅ Удалено: /usr/local/bin/qcc"; \
+	else \
+		rm -f $(BIN_TARGET) && echo "✅ Удалено: $(BIN_TARGET)"; \
+	fi
 
 check-deps:
 	@echo "🔍 Проверка зависимостей..."
