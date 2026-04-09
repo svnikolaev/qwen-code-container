@@ -1,4 +1,4 @@
-.PHONY: help run shell shell-root setup clean install uninstall check-deps pull-image remove-image test-image model set-model config-update version stop
+.PHONY: help run shell setup clean install uninstall check-deps pull-image pull remove-image test-image model set-model config-update version stop
 
 # Runtime detection: podman first (macOS), fallback docker
 RUNTIME := $(shell if command -v podman >/dev/null 2>&1; then echo podman; elif command -v docker >/dev/null 2>&1; then echo docker; fi)
@@ -25,8 +25,7 @@ help:
 	@echo ""
 	@echo "Доступные команды:"
 	@echo "  make run             - запустить Qwen Code (docker run)"
-	@echo "  make shell           - запустить bash в контейнере (от текущего пользователя)"
-	@echo "  make shell-root      - подключиться к запущенному qcc (root bash)"
+	@echo "  make shell           - подключиться к запущенному qcc (root bash)"
 	@echo "  make setup           - создать базовый config.json (OAuth) + скопировать шаблоны"
 	@echo "  make config-update   - обновить конфиги из config-templates/ (перезаписать изменения)"
 	@echo "  make clean           - удалить ~/.config/$(CONFIG_NAME)"
@@ -52,34 +51,6 @@ run:
 	@QWEN_IMAGE="$(IMAGE)" QWEN_CONFIG_NAME="$(CONFIG_NAME)" QWEN_MODEL="$(QWEN_MODEL)" QWEN_MODEL_EXPLICIT=1 ./bin/qwen-run
 
 shell:
-	@mkdir -p $(CONFIG_DIR)/npm $(CONFIG_DIR)/config $(CONFIG_DIR)/skills
-	@PROJECT_HASH=$$(echo -n "$(PROJECT_DIR)" | md5sum | cut -d' ' -f1); \
-	mkdir -p $(CONFIG_DIR)/projects/$$PROJECT_HASH/.qwen; \
-	RUNTIME_OPTS=""; \
-	if [ "$(RUNTIME)" = "podman" ]; then \
-		RUNTIME_OPTS="--userns=keep-id --group-add keep-groups"; \
-	else \
-		RUNTIME_OPTS="--user $(shell id -u):$(shell id -g) --group-add keep-groups"; \
-	fi; \
-	AGENTS_VOL=""; \
-	if [ -f "$(PROJECT_DIR)/AGENTS.md" ]; then \
-		AGENTS_VOL="-v $(PROJECT_DIR)/AGENTS.md:/workspace/.qwen/AGENTS.md:ro"; \
-	elif [ -f "$(CONFIG_DIR)/AGENTS.md" ]; then \
-		AGENTS_VOL="-v $(CONFIG_DIR)/AGENTS.md:/workspace/.qwen/AGENTS.md:ro"; \
-	fi; \
-	$(RUNTIME) run --rm -it $$RUNTIME_OPTS \
-		--security-opt label=disable \
-		-v $(PROJECT_DIR):/workspace \
-		-v $(CONFIG_DIR)/npm:/root/.npm \
-		-v $(CONFIG_DIR)/config:/root/.config \
-		-v $(CONFIG_DIR)/projects/$$PROJECT_HASH/.qwen:/root/.qwen \
-		-v $(CONFIG_DIR)/skills:/root/.qwen/shared-skills:ro \
-		$$AGENTS_VOL \
-		-w /workspace \
-		--entrypoint /bin/bash \
-		$(IMAGE)
-
-shell-root:
 	@echo "🔌 Подключение к запущенному контейнеру qcc (root shell)..."
 	$(RUNTIME) exec -it -u root qcc /bin/bash
 

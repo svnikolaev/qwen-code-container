@@ -68,14 +68,30 @@ fi
 if command -v podman >/dev/null 2>&1; then
     RUNTIME="podman"
     CONTAINER_CMD="podman"
-    USER_OPTS="--userns=keep-id --group-add keep-groups"
 elif command -v docker >/dev/null 2>&1; then
     RUNTIME="docker"
     CONTAINER_CMD="docker"
-    USER_OPTS="--user $(id -u):$(id -g) --group-add keep-groups"
 else
     echo -e "\033[0;31m❌ Не найден ни podman, ни docker\033[0m"
     exit 1
+fi
+
+# ----- Проверка podman remote (macOS всегда remote, Linux — по наличию RemoteSocket) -----
+PODMAN_REMOTE=0
+if [ "$RUNTIME" = "podman" ]; then
+    if [ "$$(uname)" = "Darwin" ]; then
+        PODMAN_REMOTE=1
+    elif podman info --format '{{.Host.RemoteSocket.Path}}' 2>/dev/null | grep -q .; then
+        PODMAN_REMOTE=1
+    fi
+fi
+
+if [ "$RUNTIME" = "podman" ] && [ "$PODMAN_REMOTE" = "1" ]; then
+    USER_OPTS=""
+elif [ "$RUNTIME" = "podman" ]; then
+    USER_OPTS="--userns=keep-id --group-add keep-groups"
+else
+    USER_OPTS="--user $(id -u):$(id -g) --group-add keep-groups"
 fi
 
 # ----- Обработка --stop -----
