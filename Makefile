@@ -1,4 +1,4 @@
-.PHONY: help run shell shell-root setup clean install uninstall check-deps pull-image remove-image test-image model set-model config-update version
+.PHONY: help run shell shell-root setup clean install uninstall check-deps pull-image remove-image test-image model set-model config-update version stop
 
 # Runtime detection: podman first (macOS), fallback docker
 RUNTIME := $(shell if command -v podman >/dev/null 2>&1; then echo podman; elif command -v docker >/dev/null 2>&1; then echo docker; fi)
@@ -38,6 +38,7 @@ help:
 	@echo "  make version         - показать версию"
 	@echo "  make model           - показать текущую модель"
 	@echo "  make set-model       - установить модель (make set-model MODEL=qwen3.6-plus)"
+	@echo "  make stop            - остановить запущенный контейнер qcc"
 	@echo ""
 	@echo "Переменные:"
 	@echo "  CONFIG_NAME=$(CONFIG_NAME)   - имя папки конфигов в ~/.config/"
@@ -258,3 +259,13 @@ else
 	@echo "✅ Модель установлена: $(MODEL)"
 	@echo "   Сохранено в $(MODEL_FILE)"
 endif
+
+# === Управление контейнером ===
+
+stop:
+	@echo "🛑 Остановка контейнера qcc..."
+	@if $(RUNTIME) ps --format '{{.Names}}' 2>/dev/null | grep -q '^qcc$$'; then \
+		$(RUNTIME) stop qcc >/dev/null 2>&1 && echo "✅ Контейнер qcc остановлен"; \
+	else \
+		echo "⚠️  Контейнер qcc не запущен"; \
+	fi
