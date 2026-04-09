@@ -1,5 +1,8 @@
 .PHONY: help run shell shell-root setup clean install uninstall check-deps pull-image remove-image test-image model set-model config-update version
 
+# Runtime detection: podman first (macOS), fallback docker
+RUNTIME := $(shell if command -v podman >/dev/null 2>&1; then echo podman; elif command -v docker >/dev/null 2>&1; then echo docker; fi)
+
 # Образ по умолчанию
 IMAGE := ghcr.io/qwenlm/qwen-code:0.14.1
 PROJECT_DIR := $(shell pwd)
@@ -52,7 +55,7 @@ shell:
 	@PROJECT_HASH=$$(echo -n "$(PROJECT_DIR)" | md5sum | cut -d' ' -f1); \
 	mkdir -p $(CONFIG_DIR)/projects/$$PROJECT_HASH/.qwen; \
 	RUNTIME_OPTS=""; \
-	if docker --version 2>/dev/null | grep -qi podman; then \
+	if [ "$(RUNTIME)" = "podman" ]; then \
 		RUNTIME_OPTS="--userns=keep-id --group-add keep-groups"; \
 	else \
 		RUNTIME_OPTS="--user $(shell id -u):$(shell id -g) --group-add keep-groups"; \
@@ -63,7 +66,7 @@ shell:
 	elif [ -f "$(CONFIG_DIR)/AGENTS.md" ]; then \
 		AGENTS_VOL="-v $(CONFIG_DIR)/AGENTS.md:/workspace/.qwen/AGENTS.md:ro"; \
 	fi; \
-	docker run --rm -it $$RUNTIME_OPTS \
+	$(RUNTIME) run --rm -it $$RUNTIME_OPTS \
 		--security-opt label=disable \
 		-v $(PROJECT_DIR):/workspace \
 		-v $(CONFIG_DIR)/npm:/root/.npm \
@@ -77,7 +80,7 @@ shell:
 
 shell-root:
 	@echo "🔌 Подключение к запущенному контейнеру qcc (root shell)..."
-	docker exec -it -u root qcc /bin/bash
+	$(RUNTIME) exec -it -u root qcc /bin/bash
 
 setup:
 	@PROJECT_HASH=$$(echo -n "$(PROJECT_DIR)" | md5sum | cut -d' ' -f1); \
@@ -207,33 +210,25 @@ uninstall:
 
 check-deps:
 	@echo "🔍 Проверка зависимостей..."
-	@command -v docker >/dev/null 2>&1 || { echo "❌ Docker не найден"; exit 1; }
-	@if command -v jq >/dev/null 2>&1; then \
-		echo "✅ jq уже установлен"; \
-	else \
-		echo "⚠️  jq не найден. Устанавливаем..."; \
-		if command -v apt >/dev/null 2>&1; then sudo apt update && sudo apt install -y jq; \
-		elif command -v dnf >/dev/null 2>&1; then sudo dnf install -y jq; \
-		elif command -v pacman >/dev/null 2>&1; then sudo pacman -S --noconfirm jq; \
-		elif command -v brew >/dev/null 2>&1; then brew install jq; \
-		else echo "❌ Не удалось установить jq"; exit 1; fi \
-	fi
+	@if [ -z "$(RUNTIME)" ]; then echo "❌ Не найден ни podman, ни docker"; exit 1; fi
+	@echo "✅ Runtime: $(RUNTIME)"
+	@command -v jq >/dev/null 2>&1 || { echo "✅ jq уже установлен"; }
 
 pull-image:
 	@echo "📥 Стягивание образа $(IMAGE)..."
-	docker pull $(IMAGE)
+	$(RUNTIME) pull $(IMAGE)
 
 remove-image:
 	@echo "🗑️ Удаление образа $(IMAGE)..."
-	docker rmi $(IMAGE) || true
+	$(RUNTIME) rmi $(IMAGE) || true
 
 test-image: pull-image
 	@echo "🐳 Проверка образа $(IMAGE)..."
 	@RUNTIME_OPTS=""; \
-	if docker --version 2>/dev/null | grep -qi podman; then RUNTIME_OPTS="--userns=keep-id"; fi; \
-	if docker run --rm $$RUNTIME_OPTS $(IMAGE) qwen --version >/dev/null 2>&1; then \
+	if [ "$(RUNTIME)" = "podman" ]; then RUNTIME_OPTS="--userns=keep-id"; fi; \
+	if $(RUNTIME) run --rm $$RUNTIME_OPTS $(IMAGE) qwen --version >/dev/null 2>&1; then \
 		echo "✅ Команда 'qwen' работает"; \
-	elif docker run --rm $$RUNTIME_OPTS $(IMAGE) qwen-code --version >/dev/null 2>&1; then \
+	elif $(RUNTIME) run --rm $$RUNTIME_OPTS $(IMAGE) qwen-code --version >/dev/null 2>&1; then \
 		echo "✅ Команда 'qwen-code' работает"; \
 	else \
 		echo "❌ Не удалось запустить qwen/qwen-code"; \
