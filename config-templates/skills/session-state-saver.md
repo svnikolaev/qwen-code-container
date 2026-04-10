@@ -77,7 +77,7 @@ JSON-файл: `/workspace/.qwen/session-state.json`
   ],
   "pending_steps": [
     "Обновить README.md",
-    "Обновить ТЕХНИЧЕСКОЕ_ЗАДАНИЕ.md"
+    "Обновить docs/specification.md"
   ],
   "open_questions": [],
   "decisions": [
