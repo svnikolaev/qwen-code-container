@@ -25,7 +25,7 @@ help:
 	@echo ""
 	@echo "Доступные команды:"
 	@echo "  make run             - запустить Qwen Code (docker run)"
-	@echo "  make shell           - подключиться к запущенному qcc (root bash)"
+	@echo "  make shell           - подключиться к контейнеру этого проекта (root bash)"
 	@echo "  make setup           - создать базовый config.json (OAuth) + скопировать шаблоны"
 	@echo "  make config-update   - обновить конфиги из config-templates/ (перезаписать изменения)"
 	@echo "  make clean           - удалить ~/.config/$(CONFIG_NAME)"
@@ -51,8 +51,14 @@ run:
 	@QWEN_IMAGE="$(IMAGE)" QWEN_CONFIG_NAME="$(CONFIG_NAME)" QWEN_MODEL="$(QWEN_MODEL)" QWEN_MODEL_EXPLICIT=1 ./bin/qwen-run
 
 shell:
-	@echo "🔌 Подключение к запущенному контейнеру qcc (root shell)..."
-	$(RUNTIME) exec -it -u root qcc /bin/bash
+	@PROJECT_HASH=$$(echo -n "$(PROJECT_DIR)" | md5sum | cut -d' ' -f1); \
+	CNAME="qcc-$$(echo "$$PROJECT_HASH" | head -c 8)"; \
+	if $(RUNTIME) ps --format '{{.Names}}' 2>/dev/null | grep -q "^$$CNAME$$"; then \
+		echo "🔌 Подключение к контейнеру $$CNAME (root shell)..."; \
+		$(RUNTIME) exec -it -u root "$$CNAME" /bin/bash; \
+	else \
+		echo "⚠️  Контейнер $$CNAME не запущен. Запустите qcc в этом проекте."; \
+	fi
 
 setup:
 	@PROJECT_HASH=$$(echo -n "$(PROJECT_DIR)" | md5sum | cut -d' ' -f1); \
@@ -243,9 +249,13 @@ endif
 # === Управление контейнером ===
 
 stop:
-	@echo "🛑 Остановка контейнера qcc..."
-	@if $(RUNTIME) ps --format '{{.Names}}' 2>/dev/null | grep -q '^qcc$$'; then \
-		$(RUNTIME) stop qcc >/dev/null 2>&1 && echo "✅ Контейнер qcc остановлен"; \
+	@echo "🛑 Остановка контейнеров qcc..."
+	@STOPPED=0; \
+	for name in $$($(RUNTIME) ps --format '{{.Names}}' 2>/dev/null | grep '^qcc-'); do \
+		$(RUNTIME) stop "$$name" >/dev/null 2>&1 && STOPPED=1; \
+	done; \
+	if [ $$STOPPED -eq 1 ]; then \
+		echo "✅ Контейнеры qcc остановлены"; \
 	else \
-		echo "⚠️  Контейнер qcc не запущен"; \
+		echo "⚠️  Нет запущенных контейнеров qcc"; \
 	fi

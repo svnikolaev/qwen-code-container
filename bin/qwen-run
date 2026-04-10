@@ -17,12 +17,30 @@ CONFIG_NAME="${QWEN_CONFIG_NAME:-qwen-code-container}"
 GLOBAL_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/$CONFIG_NAME"
 PROJECT_DIR="$(pwd)"
 PROJECT_HASH=$(echo -n "$PROJECT_DIR" | md5sum | cut -d' ' -f1)
+CONTAINER_NAME="qcc-$(echo "$PROJECT_HASH" | head -c 8)"
 PROJECT_CONFIG_DIR="$GLOBAL_CONFIG_DIR/projects/$PROJECT_HASH"
 PROJECT_QWEN_DIR="$PROJECT_CONFIG_DIR/.qwen"
 HOST_PORT="${HOST_PORT:-5173}"
 CONTAINER_PORT="${CONTAINER_PORT:-5173}"
 QWEN_MODEL="${QWEN_MODEL:-}"
 QWEN_MODEL_EXPLICIT="${QWEN_MODEL_EXPLICIT:-0}"
+
+# ----- Поиск свободного порта на хосте -----
+# Если порт 5173 занят другим контейнером qcc — ищем следующий свободный
+find_free_port() {
+    local port=$1
+    local max_attempts=20
+    local i=0
+    while [ $i -lt $max_attempts ]; do
+        if ! $CONTAINER_CMD ps --format '{{.Ports}}' 2>/dev/null | grep -q ":${port}->"; then
+            echo "$port"
+            return
+        fi
+        port=$((port + 1))
+        i=$((i + 1))
+    done
+    echo "$1"  # fallback — возвращаем оригинальный
+}
 
 # ----- Обработка аргументов -----
 DEBUG_MODE=0
@@ -44,7 +62,14 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
     echo "  --version, -v    Показать версию"
     echo "  --model          Показать текущую модель"
     echo "  --stop           Остановить запущенный контейнер qcc"
+    echo "  --attach         Подключиться к запущенной сессии"
+    echo "  --new            Запустить новый контейнер"
     echo "  --debug          Показать команду запуска без выполнения"
+    echo ""
+    echo "Повторный запуск:"
+    echo "  Если контейнер уже запущен из этого же проекта — спросит,"
+    echo "  подключиться к сессии или запустить новый."
+    echo "  Если из другого проекта — остановит старый и запустит новый."
     echo ""
     echo "Переменные окружения:"
     echo "  QWEN_IMAGE     Docker-образ (по умолчанию: ghcr.io/qwenlm/qwen-code:0.14.1)"
@@ -96,20 +121,35 @@ fi
 
 # ----- Обработка --stop -----
 if [ "${1:-}" = "--stop" ]; then
-    if $CONTAINER_CMD ps --format '{{.Names}}' 2>/dev/null | grep -q '^qcc$'; then
-        echo -e "${GREEN}🛑 Остановка контейнера qcc...${NC}"
-        $CONTAINER_CMD stop qcc >/dev/null 2>&1
-        echo -e "${GREEN}✅ Контейнер qcc остановлен${NC}"
+    # Если указана папка — ищем контейнер по хэшу, иначе — все qcc-*
+    STOPPED=0
+    for name in $($CONTAINER_CMD ps --format '{{.Names}}' 2>/dev/null | grep '^qcc-'); do
+        $CONTAINER_CMD stop "$name" >/dev/null 2>&1 && STOPPED=1
+    done
+    if [ $STOPPED -eq 1 ]; then
+        echo -e "${GREEN}✅ Контейнеры qcc остановлены${NC}"
     else
-        echo "⚠️  Контейнер qcc не запущен"
+        echo "⚠️  Нет запущенных контейнеров qcc"
     fi
     exit 0
 fi
 
 # ----- Создание глобальных директорий -----
-mkdir -p "$GLOBAL_CONFIG_DIR"/{npm,config,skills}
+mkdir -p "$GLOBAL_CONFIG_DIR"/{npm,config,skills,oauth}
 mkdir -p "$GLOBAL_CONFIG_DIR/projects"
 mkdir -p "$PROJECT_CONFIG_DIR"
+
+# Миграция OAuth из старой проектной директории в глобальную
+if [ -d "$PROJECT_QWEN_DIR" ] && [ -d "$PROJECT_QWEN_DIR/oauth_creds" ]; then
+    if [ ! -d "$GLOBAL_CONFIG_DIR/oauth/oauth_creds" ]; then
+        cp -r "$PROJECT_QWEN_DIR/oauth_creds" "$GLOBAL_CONFIG_DIR/oauth/" 2>/dev/null || true
+    fi
+fi
+if [ -f "$PROJECT_QWEN_DIR/oauth_creds.json" ] 2>/dev/null; then
+    if [ ! -f "$GLOBAL_CONFIG_DIR/oauth/oauth_creds.json" ]; then
+        cp "$PROJECT_QWEN_DIR/oauth_creds.json" "$GLOBAL_CONFIG_DIR/oauth/" 2>/dev/null || true
+    fi
+fi
 
 # ----- Инициализация шаблонов (один раз) -----
 # 1. Глобальные скиллы из шаблонов
@@ -204,6 +244,10 @@ if [ -d "$PROJECT_CONFIG_DIR/skills" ]; then
 fi
 VOLUMES+=(-v "$PROJECT_QWEN_DIR":/workspace/.qwen)
 
+# /root/.qwen — qwen-code хранит здесь авторизацию (OAuth) и сессии
+# Глобальная папка — авторизация общая для всех проектов
+VOLUMES+=(-v "$GLOBAL_CONFIG_DIR/oauth":/root/.qwen)
+
 # Проектный AGENTS.md (rw — можно редактировать)
 if [ -f "$PROJECT_CONFIG_DIR/AGENTS.md" ]; then
     VOLUMES+=(-v "$PROJECT_CONFIG_DIR/AGENTS.md":/workspace/AGENTS.md)
@@ -222,44 +266,73 @@ TMPFS=(--tmpfs /workspace/.npm:mode=755 --tmpfs /workspace/.config:mode=755)
 # Безопасная распаковка пустых массивов (bash < 4.4 compatibility)
 safe_arr() { [ $# -gt 0 ] && printf '%s ' "$@"; }
 
-# ----- Проверка: если контейнер уже запущен — подключаемся к сессии -----
-if $CONTAINER_CMD ps --format '{{.Names}}' 2>/dev/null | grep -q '^qcc$'; then
-    echo -e "${YELLOW}🔌 Контейнер qcc уже запущен — возобновляю сессию qwen-code...${NC}"
-    echo "Проект: $PROJECT_DIR"
-    exec $CONTAINER_CMD attach --sig-proxy=false qcc
+# ----- Проверка: если контейнер для этого проекта уже запущен -----
+if $CONTAINER_CMD ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
+    echo -e "${YELLOW}🔌 Контейнер уже запущен из этого проекта${NC}"
+    echo "  Проект: $PROJECT_DIR"
+
+    if [ "${1:-}" = "--new" ]; then
+        echo -e "${BLUE}🆕 Флаг --new — перезапускаю контейнер...${NC}"
+        $CONTAINER_CMD stop "$CONTAINER_NAME" >/dev/null 2>&1
+    elif [ "${1:-}" = "--attach" ]; then
+        echo -e "${BLUE}🔌 Флаг --attach — подключаюсь к сессии...${NC}"
+        exec $CONTAINER_CMD attach --sig-proxy=false "$CONTAINER_NAME"
+    else
+        echo ""
+        echo "  [1] Подключиться к существующей сессии"
+        echo "  [2] Перезапустить контейнер"
+        echo ""
+        printf "Выбор [1]: "
+        read -r CHOICE
+        if [ "$CHOICE" = "2" ]; then
+            echo -e "${BLUE}🆕 Перезапускаю контейнер...${NC}"
+            $CONTAINER_CMD stop "$CONTAINER_NAME" >/dev/null 2>&1
+        else
+            echo -e "${BLUE}🔌 Подключаюсь к сессии...${NC}"
+            exec $CONTAINER_CMD attach --sig-proxy=false "$CONTAINER_NAME"
+        fi
+    fi
 fi
 
 # ----- Запуск нового контейнера -----
 echo -e "${GREEN}🔍 Qwen Code Launcher (прямой запуск)${NC}"
 echo "Проект: $PROJECT_DIR"
 
+# Ищем свободный порт на хосте
+RESOLVED_HOST_PORT=$(find_free_port "$HOST_PORT")
+if [ "$RESOLVED_HOST_PORT" != "$HOST_PORT" ]; then
+    echo -e "${YELLOW}📌 Порт $HOST_PORT занят — использую $RESOLVED_HOST_PORT${NC}"
+fi
+
 if [ $DEBUG_MODE -eq 1 ]; then
     echo -e "${YELLOW}🔍 DEBUG: команда запуска:${NC}"
     echo "$CONTAINER_CMD run --rm -it \\"
     echo "    $USER_OPTS \\"
     echo "    --security-opt label=disable --security-opt no-new-privileges:true \\"
+    echo "    --label qcc.project_hash=$PROJECT_HASH \\"
     echo "    ${VOLUMES[@]+"${VOLUMES[@]}"} \\"
     echo "    ${TMPFS[@]+"${TMPFS[@]}"} \\"
     echo "    ${GIT_ENVS[@]+"${GIT_ENVS[@]}"} \\"
     echo "    -e QWEN_ALLOW_RUN_IN_HOME=1 \\"
     echo "    -w /workspace \\"
     echo "    --entrypoint /usr/local/bin/git-entrypoint.sh \\"
-    echo "    -p ${HOST_PORT}:${CONTAINER_PORT} \\"
+    echo "    -p ${RESOLVED_HOST_PORT}:${CONTAINER_PORT} \\"
     echo "    $QWEN_IMAGE \\"
     echo "    qwen ${MODEL_ARGS[@]+"${MODEL_ARGS[@]}"}"
     exit 0
 fi
 
 exec $CONTAINER_CMD run --rm -it \
-    --name qcc \
+    --name "$CONTAINER_NAME" \
     $USER_OPTS \
     --security-opt label=disable --security-opt no-new-privileges:true \
+    --label "qcc.project_hash=$PROJECT_HASH" \
     ${VOLUMES[@]+"${VOLUMES[@]}"} \
     ${TMPFS[@]+"${TMPFS[@]}"} \
     ${GIT_ENVS[@]+"${GIT_ENVS[@]}"} \
     -e QWEN_ALLOW_RUN_IN_HOME=1 \
     -w /workspace \
     --entrypoint /usr/local/bin/git-entrypoint.sh \
-    -p "${HOST_PORT}:${CONTAINER_PORT}" \
+    -p "${RESOLVED_HOST_PORT}:${CONTAINER_PORT}" \
     "$QWEN_IMAGE" \
     qwen ${MODEL_ARGS[@]+"${MODEL_ARGS[@]}"}

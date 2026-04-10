@@ -23,4 +23,4 @@ jobs:
 
       - name: Run shellcheck
         run: |
-          shellcheck --severity=warning bin/qwen-run bin/docker-entrypoint.sh
+          shellcheck --severity=warning bin/qwen-run container/entrypoint.sh
