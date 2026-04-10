@@ -210,7 +210,7 @@
 | ------------------ | ------------------------------ | --------------------------------- | ----------- |
 | `QWEN_IMAGE`       | Имя Docker-образа              | `ghcr.io/qwenlm/qwen-code:0.14.1` | Нет         |
 | `QWEN_CONFIG_NAME` | Имя папки конфигов            | `qwen-code-container`              | Нет         |
-| `QWEN_MODEL`       | Модель для AI                  | `qwen3.6-plus`                    | Нет         |
+| `QWEN_MODEL`       | Модель для AI                  | `qwen-coder`                      | Нет         |
 | `HOST_PORT`        | Порт хоста                     | `5173`                            | Нет         |
 | `CONTAINER_PORT`   | Порт контейнера                | `5173`                            | Нет         |
 

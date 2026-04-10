@@ -68,7 +68,7 @@ JSON-файл: `/workspace/.qwen/session-state.json`
   "started_at": "2026-04-10T14:30:00Z",
   "saved_at": "2026-04-10T15:00:00Z",
   "message_count": 12,
-  "model": "qwen3.6-plus",
+  "model": "qwen-coder",
   "active_task": "Реализовать скилл для сохранения сессии",
   "completed_steps": [
     "Изучена текущая архитектура",

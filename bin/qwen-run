@@ -22,7 +22,7 @@ PROJECT_CONFIG_DIR="$GLOBAL_CONFIG_DIR/projects/$PROJECT_HASH"
 PROJECT_QWEN_DIR="$PROJECT_CONFIG_DIR/.qwen"
 HOST_PORT="${HOST_PORT:-5173}"
 CONTAINER_PORT="${CONTAINER_PORT:-5173}"
-QWEN_MODEL="${QWEN_MODEL:-}"
+QWEN_MODEL="${QWEN_MODEL:-qwen-coder}"
 QWEN_MODEL_EXPLICIT="${QWEN_MODEL_EXPLICIT:-0}"
 
 # ----- Поиск свободного порта на хосте -----
@@ -91,10 +91,8 @@ fi
 
 # ----- Runtime detection -----
 if command -v podman >/dev/null 2>&1; then
-    RUNTIME="podman"
     CONTAINER_CMD="podman"
 elif command -v docker >/dev/null 2>&1; then
-    RUNTIME="docker"
     CONTAINER_CMD="docker"
 else
     echo -e "\033[0;31m❌ Не найден ни podman, ни docker\033[0m"
@@ -103,17 +101,17 @@ fi
 
 # ----- Проверка podman remote (macOS всегда remote, Linux — по наличию RemoteSocket) -----
 PODMAN_REMOTE=0
-if [ "$RUNTIME" = "podman" ]; then
-    if [ "$$(uname)" = "Darwin" ]; then
+if [ "$CONTAINER_CMD" = "podman" ]; then
+    if [ "$(uname)" = "Darwin" ]; then
         PODMAN_REMOTE=1
     elif podman info --format '{{.Host.RemoteSocket.Path}}' 2>/dev/null | grep -q .; then
         PODMAN_REMOTE=1
     fi
 fi
 
-if [ "$RUNTIME" = "podman" ] && [ "$PODMAN_REMOTE" = "1" ]; then
+if [ "$CONTAINER_CMD" = "podman" ] && [ "$PODMAN_REMOTE" = "1" ]; then
     USER_OPTS=""
-elif [ "$RUNTIME" = "podman" ]; then
+elif [ "$CONTAINER_CMD" = "podman" ]; then
     USER_OPTS="--userns=keep-id --group-add keep-groups"
 else
     USER_OPTS="--user $(id -u):$(id -g) --group-add keep-groups"
@@ -262,6 +260,9 @@ else
     echo -e "${YELLOW}⚠️  Предупреждение: $ENTRYPOINT_SOURCE не найден, entrypoint не будет смонтирован${NC}"
 fi
 
+# tmpfs поверх /workspace/.npm и /workspace/.config — защита от загрязнения проекта.
+# Если процесс внутри контейнера пишет по этим путям, данные уходят в RAM, а не в проект.
+# Реальный кэш/конфиги доступны через /root/.npm и /root/.config (bind-mount выше).
 TMPFS=(--tmpfs /workspace/.npm:mode=755 --tmpfs /workspace/.config:mode=755)
 
 # ----- Проверка: если контейнер для этого проекта уже запущен -----
@@ -309,6 +310,7 @@ if [ $DEBUG_MODE -eq 1 ]; then
     echo "    --security-opt label=disable --security-opt no-new-privileges:true \\"
     echo "    --label qcc.project_hash=$PROJECT_HASH \\"
     echo "    ${VOLUMES[@]+"${VOLUMES[@]}"} \\"
+    echo "    ${OVERLAY_VOLUMES[@]+"${OVERLAY_VOLUMES[@]}"} \\"
     echo "    ${TMPFS[@]+"${TMPFS[@]}"} \\"
     echo "    ${GIT_ENVS[@]+"${GIT_ENVS[@]}"} \\"
     echo "    -e QWEN_ALLOW_RUN_IN_HOME=1 \\"
@@ -326,6 +328,7 @@ exec $CONTAINER_CMD run --rm -it \
     --security-opt label=disable --security-opt no-new-privileges:true \
     --label "qcc.project_hash=$PROJECT_HASH" \
     ${VOLUMES[@]+"${VOLUMES[@]}"} \
+    ${OVERLAY_VOLUMES[@]+"${OVERLAY_VOLUMES[@]}"} \
     ${TMPFS[@]+"${TMPFS[@]}"} \
     ${GIT_ENVS[@]+"${GIT_ENVS[@]}"} \
     -e QWEN_ALLOW_RUN_IN_HOME=1 \

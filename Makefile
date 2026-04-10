@@ -12,10 +12,10 @@ VERSION := $(shell cat $(PROJECT_DIR)/VERSION 2>/dev/null || echo "unknown")
 
 # Имя папки с глобальными конфигами
 CONFIG_NAME ?= qwen-code-container
-CONFIG_DIR := $(HOME)/.config/$(CONFIG_NAME)
+CONFIG_DIR := $(shell echo "$${XDG_CONFIG_HOME:-$$HOME/.config}/$(CONFIG_NAME)")
 
 # Модель по умолчанию
-QWEN_MODEL ?= qwen3.6-plus
+QWEN_MODEL ?= qwen-coder
 
 BIN_TARGET := $(HOME)/.local/bin/qcc
 BIN_SOURCE := $(PROJECT_DIR)/bin/qwen-run
@@ -36,7 +36,7 @@ help:
 	@echo "  make remove-image    - удалить образ"
 	@echo "  make version         - показать версию"
 	@echo "  make model           - показать текущую модель"
-	@echo "  make set-model       - установить модель (make set-model MODEL=qwen3.6-plus)"
+	@echo "  make set-model       - установить модель (make set-model MODEL=qwen-coder)"
 	@echo "  make stop            - остановить запущенный контейнер qcc"
 	@echo ""
 	@echo "Переменные:"
@@ -216,7 +216,25 @@ uninstall:
 
 check-deps:
 	@echo "🔍 Проверка зависимостей..."
-	@if [ -z "$(RUNTIME)" ]; then echo "❌ Не найден ни podman, ни docker"; exit 1; fi
+	@if [ -z "$(RUNTIME)" ]; then \
+		echo ""; \
+		echo "❌ Не найден ни podman, ни docker. Установите один из них:"; \
+		echo ""; \
+		echo "  Podman (рекомендуется):"; \
+		echo "    Ubuntu/Debian:  sudo apt install podman"; \
+		echo "    Fedora/RHEL:    sudo dnf install podman"; \
+		echo "    Arch Linux:     sudo pacman -S podman"; \
+		echo "    macOS:          brew install podman && podman machine init && podman machine start"; \
+		echo ""; \
+		echo "  Docker:"; \
+		echo "    Ubuntu/Debian:  curl -fsSL https://get.docker.com | sh"; \
+		echo "    Fedora/RHEL:    sudo dnf install docker-ce && sudo systemctl enable --now docker"; \
+		echo "    macOS:          https://docs.docker.com/desktop/install/mac-install/"; \
+		echo ""; \
+		echo "После установки запустите: make install"; \
+		echo ""; \
+		exit 1; \
+	fi
 	@echo "✅ Runtime: $(RUNTIME)"
 	@command -v jq >/dev/null 2>&1 || { echo "✅ jq уже установлен"; }
 
@@ -231,7 +249,13 @@ remove-image:
 test-image: pull-image
 	@echo "🐳 Проверка образа $(IMAGE)..."
 	@RUNTIME_OPTS=""; \
-	if [ "$(RUNTIME)" = "podman" ]; then RUNTIME_OPTS="--userns=keep-id"; fi; \
+	if [ "$(RUNTIME)" = "podman" ]; then \
+		if [ "$$(uname)" = "Darwin" ]; then \
+			RUNTIME_OPTS=""; \
+		else \
+			RUNTIME_OPTS="--userns=keep-id --group-add keep-groups"; \
+		fi; \
+	fi; \
 	if $(RUNTIME) run --rm $$RUNTIME_OPTS $(IMAGE) qwen --version >/dev/null 2>&1; then \
 		echo "✅ Команда 'qwen' работает"; \
 	elif $(RUNTIME) run --rm $$RUNTIME_OPTS $(IMAGE) qwen-code --version >/dev/null 2>&1; then \
@@ -252,11 +276,11 @@ model:
 		echo "🤖 Модель не задана (используется по умолчанию от провайдера)"; \
 	fi
 	@echo "   Makefile default: $(QWEN_MODEL)"
-	@echo "   Изменить: make set-model MODEL=qwen3.6-plus"
+	@echo "   Изменить: make set-model MODEL=qwen-coder"
 
 set-model:
 ifndef MODEL
-	@echo "❌ Укажите модель: make set-model MODEL=qwen3.6-plus"
+	@echo "❌ Укажите модель: make set-model MODEL=qwen-coder"
 	@exit 1
 else
 	@mkdir -p $(CONFIG_DIR)

@@ -126,7 +126,7 @@ credentials.json
 | `make uninstall`     | удалить symlink                              |
 | `make check-deps`    | проверить зависимости (docker, jq)           |
 | `make model`         | показать текущую модель                      |
-| `make set-model`     | установить модель (`MODEL=qwen3.6-plus`)     |
+| `make set-model`     | установить модель (`MODEL=qwen-coder`)     |
 
 ## Обновление скиллов
 
@@ -160,17 +160,31 @@ qcc --model         # проверить
 ```
 
 Модель сохраняется в `~/.config/qwen-code-container/model` и передаётся как `--model <версия>` при каждом запуске.
+По умолчанию используется `qwen-coder` (доступна при OAuth-авторизации).
 
 ### Как убедиться, что используется последняя версия
 
-1. Проверить актуальную версию на [qwen.ai](https://qwen.ai) или в [блоге Qwen](https://qwenlm.github.io/)
+1. Проверить актуальную версию модели на [GHCR](https://github.com/QwenLM/qwen-code/pkgs/container/qwen-code)
 2. Установить: `make set-model MODEL=qwen-coder`
-3. При выходе новой версии — обновить: `make set-model MODEL=qwen-coder-new`
+3. При выходе новой модели — обновить: `make set-model MODEL=qwen-coder-new`
 
 ## Требования
 
 - Docker (или Podman)
 - `jq` — требуется только для команд `make` (`sudo apt install jq` / `brew install jq`). Для прямого запуска `qcc` не нужен.
+
+## Версии образов
+
+Образы Qwen Code публикуются на [**GitHub Container Registry**](https://github.com/QwenLM/qwen-code/pkgs/container/qwen-code).
+Там можно посмотреть доступные версии (теги) и выбрать актуальную.
+
+По умолчанию используется: `ghcr.io/qwenlm/qwen-code:0.14.1`
+
+Чтобы обновить образ, измените `IMAGE` в `Makefile` или переменную `QWEN_IMAGE` при запуске:
+
+```bash
+QWEN_IMAGE=ghcr.io/qwenlm/qwen-code:0.15.0 qcc
+```
 
 ## Устранение неполадок
 
