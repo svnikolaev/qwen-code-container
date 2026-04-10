@@ -1,10 +1,5 @@
 #!/bin/bash
-# container/entrypoint.sh — настраивает git и shared skills перед запуском qwen
-
-# Если skills нет, а shared-skills есть — создаём symlink
-if [ ! -d "/root/.qwen/skills" ] && [ -d "/root/.qwen/shared-skills" ]; then
-    ln -s shared-skills /root/.qwen/skills
-fi
+# container/entrypoint.sh — настраивает git перед запуском qwen
 
 # Применяем git config с хоста, если переданы переменные
 if [ -n "$GIT_CONFIG_NAME" ]; then

@@ -140,6 +140,7 @@ mkdir -p "$GLOBAL_CONFIG_DIR/projects"
 mkdir -p "$PROJECT_CONFIG_DIR"
 
 # Миграция OAuth из старой проектной директории в глобальную
+# TODO: убрать после достаточного времени (разовая миграция для старых пользователей)
 if [ -d "$PROJECT_QWEN_DIR" ] && [ -d "$PROJECT_QWEN_DIR/oauth_creds" ]; then
     if [ ! -d "$GLOBAL_CONFIG_DIR/oauth/oauth_creds" ]; then
         cp -r "$PROJECT_QWEN_DIR/oauth_creds" "$GLOBAL_CONFIG_DIR/oauth/" 2>/dev/null || true
@@ -262,9 +263,6 @@ else
 fi
 
 TMPFS=(--tmpfs /workspace/.npm:mode=755 --tmpfs /workspace/.config:mode=755)
-
-# Безопасная распаковка пустых массивов (bash < 4.4 compatibility)
-safe_arr() { [ $# -gt 0 ] && printf '%s ' "$@"; }
 
 # ----- Проверка: если контейнер для этого проекта уже запущен -----
 if $CONTAINER_CMD ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then

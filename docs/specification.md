@@ -170,22 +170,23 @@
 ```text
 <проект>/
 ├── bin/
-│   └── qwen-run              # Главный скрипт запуска (~300 строк)
+│   └── qwen-run              # Главный скрипт запуска (~330 строк)
 ├── container/
 │   └── entrypoint.sh         # Entry-point контейнера
 ├── config-templates/
-│   ├── agent/                # Глобальные конфиги AI-агента
+│   ├── agent/                # Шаблон AGENTS.md для AI-агента
 │   ├── qwen/                 # Шаблоны конфигов Qwen
 │   └── skills/               # Глобальные скиллы
 ├── docs/
 │   ├── specification.md      # Техническое задание (этот файл)
 │   └── implementation.md     # Описание реализации
-├── AGENTS.md                 # Инструкции для AI
 ├── Makefile                  # Команды управления
 ├── VERSION                   # Текущая версия проекта
 ├── .env.example              # Пример переменных окружения
 └── .qwenignore.example       # Пример файла перекрытия
 ```
+
+> **AGENTS.md** генерируется из `config-templates/agent/` и не хранится в git.
 
 #### 3.4. Схема монтирования в контейнер
 
@@ -194,10 +195,10 @@
 | `<проект>`                           | `/workspace`                          | Рабочая директория           |
 | `<глобальный>/npm`                   | `/root/.npm`                          | Кэш npm                      |
 | `<глобальный>/config`                | `/root/.config`                       | Общие конфиги                |
-| `<глобальный>/projects/<hash>/.qwen` | `/root/.qwen`                         | Конфиг Qwen                  |
-| `<глобальный>/projects/<hash>/.qwen` | `/workspace/.qwen`                    | Конфиг Qwen в проекте        |
-| `<глобальный>/skills`                | `/root/.qwen/shared-skills:ro`        | Скиллы (read-only)           |
-| `AGENTS.md` (если есть)             | `/root/AGENTS.md:ro`                  | Системный промпт (read-only) |
+| `<глобальный>/projects/<hash>/.qwen` | `/workspace/.qwen`                    | Конфиг Qwen (OAuth, сессии)  |
+| `<глобальный>/oauth`                 | `/root/.qwen`                         | Авторизация (общая)          |
+| `<проектный>/skills`                 | `/workspace/.qwen/skills`             | Скиллы проекта (rw)          |
+| `<проектный>/AGENTS.md` (если есть) | `/workspace/AGENTS.md`                | Системный промпт (rw)        |
 | `entrypoint.sh`                    | `/usr/local/bin/git-entrypoint.sh:ro` | Entry-point (read-only)      |
 | Перекрытые файлы (.qwenignore)      | `-v /workspace/<файл>`                | Пустой volume поверх файла   |
 

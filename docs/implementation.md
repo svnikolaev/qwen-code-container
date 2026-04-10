@@ -16,14 +16,13 @@
 ```text
 qwen-code-container/
 ├── bin/
-│   └── qwen-run              # Главный launcher-скрипт (bash, ~300 строк)
+│   └── qwen-run              # Главный launcher-скрипт (bash, ~330 строк)
 ├── container/
-│   └── entrypoint.sh         # Entry-point контейнера (bash, ~17 строк)
+│   └── entrypoint.sh         # Entry-point контейнера (bash, ~12 строк)
 ├── config-templates/
 │   ├── agent/
-│   │   └── AGENTS.md         # Глобальный промпт для AI-агента
+│   │   └── AGENTS.md         # Шаблон промпта для AI-агента
 │   ├── qwen/
-│   │   ├── settings.json     # Дефолтный конфиг Qwen (OAuth, coder-model)
 │   │   ├── output-language.md # Промпт: отвечать на английском
 │   │   └── .gitignore        # Git-игнор для шаблонов Qwen
 │   └── skills/
@@ -34,14 +33,16 @@ qwen-code-container/
 ├── docs/
 │   ├── specification.md       # Техническое задание (абстрактное)
 │   └── implementation.md      # Описание реализации (этот файл)
-├── AGENTS.md                 # Системный промпт для AI
-├── Makefile                  # ~250 строк, 15+ целей
+├── Makefile                  # ~280 строк, 15+ целей
 ├── VERSION                   # Текущая версия проекта (0.2.0)
 ├── .env.example              # Пример переменных окружения
 ├── .qwenignore.example       # Пример .qwenignore
 ├── LICENSE                   # MIT License
 └── README.md                 # Пользовательская документация
 ```
+
+> **AGENTS.md** не хранится в git (добавлен в `.gitignore`).
+> Шаблон — `config-templates/agent/AGENTS.md`.
 
 #### 10.2. Реализация .qwenignore
 
@@ -139,17 +140,15 @@ docker run --rm -it \
 
 ```bash
 #!/bin/bash
-# Symlink skills, если нужно
-if [ ! -d "/root/.qwen/skills" ] && [ -d "/root/.qwen/shared-skills" ]; then
-    ln -s shared-skills /root/.qwen/skills
-fi
-
-# Git config с хоста
+# Применяем git config с хоста
 [ -n "$GIT_CONFIG_NAME" ] && git config --global user.name "$GIT_CONFIG_NAME"
 [ -n "$GIT_CONFIG_EMAIL" ] && git config --global user.email "$GIT_CONFIG_EMAIL"
 
 exec "$@"
 ```
+
+Entry-point минимален — только настройка git перед запуском основной команды.
+Скиллы больше не требуют symlink, так как монтируются напрямую в `/workspace/.qwen/skills`.
 
 #### 10.6. Глобальная конфигурация — реализация
 
@@ -214,11 +213,16 @@ mkdir -p "$PROJECT_QWEN_DIR"
 | SELinux                   | `--security-opt label=disable`                                            |
 | Временные директории      | `--tmpfs /workspace/.npm:mode=755`, `--tmpfs /workspace/.config:mode=755` |
 | `.qwen` в проекте         | Bind-mount в `PROJECT_QWEN_DIR` (не tmpfs, не создаётся в проекте)        |
-| Read-only монтирование    | `skills:ro`, `AGENTS.md:ro`, `entrypoint:ro`                              |
+| Read-only монтирование    | `entrypoint.sh:ro`                                                        |
+| Rw монтирование           | `skills`, `AGENTS.md`, `.qwen`                                            |
 | Метка проекта             | `--label "qcc.project_hash=$PROJECT_HASH"`                                |
 | Подавление предупреждений | `-e QWEN_ALLOW_RUN_IN_HOME=1`                                             |
 
-#### 10.10. Скиллы — реализация
+#### 10.9. Скиллы — реализация
+
+Скиллы хранятся в `config-templates/skills/` и копируются при `make install` в
+`~/.config/qwen-code-container/skills/`, а оттуда — в проектную директорию
+`projects/<hash>/skills/`. В контейнере монтируются как `/workspace/.qwen/skills` (rw).
 
 **File Consistency Checker** (`config-templates/skills/file-consistency-checker.md`):
 
@@ -255,6 +259,9 @@ mkdir -p "$PROJECT_QWEN_DIR"
 - Безопасность: не сохраняет секреты и личные данные
 
 #### 10.11. AGENTS.md — реализация
+
+Файл **не хранится в git** (добавлен в `.gitignore`). Шаблон лежит в
+`config-templates/agent/AGENTS.md` и копируется при `make install`.
 
 Файл содержит 7 разделов инструкций для AI:
 

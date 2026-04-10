@@ -185,11 +185,11 @@ qcc --model         # проверить
 ```
 .
 ├── bin/
-│   └── qwen-run              # Тонкая обёртка над docker run (~300 строк)
+│   └── qwen-run              # Тонкая обёртка над docker run (~330 строк)
 ├── container/
-│   └── entrypoint.sh         # Entry-point контейнера: git config + skills
+│   └── entrypoint.sh         # Entry-point контейнера: git config
 ├── config-templates/
-│   ├── agent/                # Глобальные конфиги AI-агента
+│   ├── agent/                # Шаблон AGENTS.md для AI-агентов
 │   ├── qwen/                 # Шаблоны конфигов Qwen
 │   └── skills/               # Глобальные скиллы
 ├── docs/
@@ -197,12 +197,14 @@ qcc --model         # проверить
 │   └── implementation.md     # Описание реализации
 ├── Makefile                  # Команды управления
 ├── VERSION                   # Текущая версия проекта
-├── AGENTS.md                 # Инструкции для AI-агентов
 ├── LICENSE                   # Лицензия MIT
 ├── .gitignore                # Git ignore правила
 ├── .env.example              # Пример переменных окружения
 └── .qwenignore.example       # Пример файла перекрытия
 ```
+
+> **AGENTS.md** генерируется при `make install` из `config-templates/agent/`
+> и не хранится в git (локальный файл, можно редактировать).
 
 ## Лицензия
 

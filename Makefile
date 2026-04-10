@@ -149,6 +149,25 @@ config-update:
 
 install:
 	@echo "🔧 Установка Qwen Code Launcher..."
+	@if [ -z "$(RUNTIME)" ]; then \
+		echo ""; \
+		echo "❌ Не найден ни Docker, ни Podman. Установите один из них:"; \
+		echo ""; \
+		echo "  Podman (рекомендуется):"; \
+		echo "    Ubuntu/Debian:  sudo apt install podman"; \
+		echo "    Fedora/RHEL:    sudo dnf install podman"; \
+		echo "    Arch Linux:     sudo pacman -S podman"; \
+		echo "    macOS:          brew install podman && podman machine init && podman machine start"; \
+		echo ""; \
+		echo "  Docker:"; \
+		echo "    Ubuntu/Debian:  curl -fsSL https://get.docker.com | sh"; \
+		echo "    Fedora/RHEL:    sudo dnf install docker-ce && sudo systemctl enable --now docker"; \
+		echo "    macOS:          https://docs.docker.com/desktop/install/mac-install/"; \
+		echo ""; \
+		echo "После установки запустите: make install"; \
+		echo ""; \
+		exit 1; \
+	fi
 	@mkdir -p $(CONFIG_DIR)/npm $(CONFIG_DIR)/config $(CONFIG_DIR)/skills
 	@echo "📁 Конфиги: $(CONFIG_DIR)"
 	@# Копируем агент-конфиги (AGENTS.md и др.)
