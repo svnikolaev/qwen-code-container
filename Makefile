@@ -3,9 +3,10 @@
 # Runtime detection: podman first (macOS), fallback docker
 RUNTIME := $(shell if command -v podman >/dev/null 2>&1; then echo podman; elif command -v docker >/dev/null 2>&1; then echo docker; fi)
 
-# Образ по умолчанию
-IMAGE := ghcr.io/qwenlm/qwen-code:0.14.1
 PROJECT_DIR := $(shell pwd)
+
+# Образ (единый источник — файл IMAGE)
+IMAGE := $(shell cat $(PROJECT_DIR)/IMAGE)
 
 # Версия проекта
 VERSION := $(shell cat $(PROJECT_DIR)/VERSION 2>/dev/null || echo "unknown")
