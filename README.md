@@ -222,7 +222,7 @@ QWEN_IMAGE=ghcr.io/qwenlm/qwen-code:0.15.0 qcc
 ```
 .
 ├── bin/
-│   └── qwen-run              # Тонкая обёртка над docker run (~330 строк)
+│   └── qwen-run              # Тонкая обёртка над docker run (~430 строк)
 ├── container/
 │   └── entrypoint.sh         # Entry-point контейнера: git config
 ├── config-templates/
@@ -231,8 +231,14 @@ QWEN_IMAGE=ghcr.io/qwenlm/qwen-code:0.15.0 qcc
 │   └── skills/               # Глобальные скиллы
 ├── docs/
 │   ├── specification.md      # Техническое задание (абстрактное)
-│   └── implementation.md     # Описание реализации
-├── Makefile                  # Команды управления
+│   ├── implementation.md     # Описание реализации
+│   └── MAINTENANCE.md        # Руководство по поддержке
+├── ops/
+│   ├── common.sh             # Общие переменные и утилиты
+│   ├── system.sh             # install, uninstall, check-deps
+│   ├── image.sh              # pull, remove, test
+│   └── project.sh            # setup, config-update, model, container, lint, check
+├── Makefile                  # Тонкая обёртка над ops/ (~100 строк)
 ├── VERSION                   # Текущая версия проекта
 ├── LICENSE                   # Лицензия MIT
 ├── .gitignore                # Git ignore правила

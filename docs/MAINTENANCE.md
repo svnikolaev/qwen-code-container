@@ -8,6 +8,7 @@
 ## 📌 Быстрая навигация
 
 - [Как это работает](#как-это-работает)
+- [Архитектура: Makefile + ops/](#архитектура-makefile--ops)
 - [Почему так, а не иначе](#почему-так-а-не-иначе)
 - [Обновление версий](#обновление-версий)
 - [Типичные проблемы и решения](#типичные-проблемы-и-решения)
@@ -15,6 +16,7 @@
 - [Скиллы AI](#скиллы-ai)
 - [Контейнер и runtime](#контейнер-и-runtime)
 - [Глобальная конфигурация](#глобальная-конфигурация)
+- [Ops-скрипты](#ops-скрипты)
 - [CI/CD и релизы](#cicd-и-релизы)
 - [Чеклист перед релизом](#чеклист-перед-релизом)
 
@@ -40,6 +42,133 @@ echo -n "/home/user/my-project" | md5sum
 - **Запускать несколько проектов параллельно** — контейнеры не конфликтуют
 - **Сохранять сессию** — при повторном запуске предлагается подключиться к существующему контейнеру
 - **Автоматически подбирать порты** — если 5173 занят, берётся следующий свободный
+
+---
+
+## 🏗️ Архитектура: Makefile + ops/
+
+### Принцип
+
+**Makefile — тонкая обёртка. Логика в `ops/`.**
+
+Почему:
+1. **Скрипты работают без make** — `./ops/project.sh setup` из любого места
+2. **CI может вызывать напрямую** — без установки make в контейнер
+3. **`--help` в каждом скрипте** — `./ops/project.sh help`
+4. **Makefile ~100 строк** — легко читать, легко менять
+5. **Общие переменные в `common.sh`** — один источник, все скрипты source
+
+### Как это устроено
+
+```
+user → make install
+             ↓
+       Makefile: @./ops/system.sh install
+             ↓
+       ops/system.sh: source common.sh → do_install()
+```
+
+**Цепочка:**
+1. Пользователь вызывает `make install`
+2. Makefile вызывает `./ops/system.sh install`
+3. `system.sh` делает `source common.sh` — получает переменные
+4. `do_install()` делает работу
+
+### Структура Makefile
+
+```makefile
+# ─── Переменные (читаются из файлов) ──────────
+PROJECT_DIR := $(shell pwd)
+VERSION     := $(shell cat VERSION)
+IMAGE       := $(shell cat IMAGE)
+
+# ─── Ops-скрипты ─────────────────────────────
+install:
+    @./ops/system.sh install
+```
+
+**Правила:**
+- Переменные только для чтения — `PROJECT_DIR`, `VERSION`, `IMAGE`, `CONFIG_NAME`
+- Нет shell-логики в целях — только вызов `./ops/скрипт.sh`
+- Исключение: `run` и `health` — передают переменные окружения в `bin/qwen-run`
+
+### Структура ops-скрипта
+
+```bash
+#!/usr/bin/env bash
+# имя.sh — описание команд
+source "$(dirname "$0")/common.sh"
+
+do_cmd() {
+    # логика
+}
+
+case "${1:-help}" in
+    cmd)    do_cmd ;;
+    help)   echo "help text" ;;
+esac
+```
+
+**Правила:**
+- Всегда `set -euo pipefail` (в `common.sh`)
+- Всегда `source common.sh` первой строкой
+- Функции: `do_имя()`
+- `case` в конце — dispatch
+- `help` показывает команды и аргументы
+
+### Когда добавлять новую команду
+
+1. **Определи группу:**
+   - Установка/удаление → `system.sh`
+   - Docker-образ → `image.sh`
+   - Проектные операции → `project.sh`
+
+2. **Если новая группа** — создай `ops/newgroup.sh` по шаблону
+
+3. **Добавь функцию** `do_имя()` в скрипт
+
+4. **Добавь `case`** в `Main` секцию
+
+5. **Добавь цель** в Makefile:
+   ```makefile
+   newcmd:
+       @./ops/скрипт.sh newcmd
+   ```
+
+6. **Обнови справку** в скрипте и `make help`
+
+### Группа файлов для каждой команды
+
+| Группа | Скрипт | Что входит |
+|---|---|---|
+| Система | `system.sh` | install, uninstall, check-deps |
+| Образ | `image.sh` | pull, remove, test |
+| Проект | `project.sh` | setup, config-update, model, container, lint, check |
+| Общие | `common.sh` | переменные, утилиты (source) |
+
+### Переменные из common.sh
+
+| Переменная | Откуда | Зачем |
+|---|---|---|
+| `OPS_DIR` | `dirname $0` | Путь к ops/ |
+| `PROJECT_DIR` | `OPS_DIR/..` | Корень проекта |
+| `VERSION` | `PROJECT_DIR/VERSION` | Версия проекта |
+| `IMAGE` | `PROJECT_DIR/IMAGE` | Docker-образ |
+| `CONFIG_NAME` | env или default | Имя папки конфигов |
+| `CONFIG_DIR` | `~/.config/$CONFIG_NAME` | Глобальные конфиги |
+| `RUNTIME` | auto-detect | podman или docker |
+| `BIN_TARGET` | `~/.local/bin/qcc` | Symlink для установки |
+| `MODEL_FILE` | `$CONFIG_DIR/model` | Текущая модель |
+
+### Утилиты из common.sh
+
+| Функция | Что делает |
+|---|---|
+| `detect_runtime` | Возвращает "podman", "docker" или "" |
+| `require_runtime` | Выход если runtime не найден |
+| `project_hash` | MD5 первых 8 символов пути проекта |
+| `container_name` | `qcc-XXXXXXXX` для текущего проекта |
+| `log_info/ok/warn/err` | Логирование с эмодзи |
 
 ---
 
@@ -220,7 +349,12 @@ qwen-code-container/
 │   ├── specification.md      # ТЗ (техническое задание)
 │   ├── implementation.md     # Описание реализации
 │   └── MAINTENANCE.md        # ← ТЫ ЗДЕСЬ
-├── Makefile                  # Цели: install, setup, run, lint, check...
+├── ops/
+│   ├── common.sh             # Общие переменные и утилиты
+│   ├── system.sh             # install, uninstall, check-deps
+│   ├── image.sh              # pull, remove, test
+│   └── project.sh            # setup, config-update, model, container, lint, check
+├── Makefile                  # Тонкая обёртка над ops/ (~100 строк)
 ├── IMAGE                     # Образ Docker (единый источник)
 ├── VERSION                   # Версия проекта
 ├── .gitignore                # Что не коммитить
@@ -339,6 +473,77 @@ qcc-$(echo -n "$PROJECT_DIR" | md5sum | cut -c1-8)
 
 ---
 
+## 🛠️ Ops-скрипты
+
+Makefile — тонкая обёртка. Вся логика в `ops/`. Скрипты работают **без make**:
+
+```bash
+# Самостоятельный вызов
+./ops/system.sh install
+./ops/image.sh pull
+./ops/project.sh setup
+
+# Справка по каждому скрипту
+./ops/system.sh help
+./ops/image.sh help
+./ops/project.sh help
+```
+
+### Структура
+
+| Скрипт | Команды | Назначение |
+|---|---|---|
+| `common.sh` | (source) | Общие переменные: `RUNTIME`, `CONFIG_DIR`, `PROJECT_DIR`, `VERSION`, `IMAGE` |
+| `system.sh` | `install`, `uninstall`, `check-deps` | Установка, проверка зависимостей |
+| `image.sh` | `pull`, `remove`, `test` | Управление Docker-образом |
+| `project.sh` | `setup`, `config-update`, `model`, `container`, `lint`, `check` | Проектные операции |
+
+### project.sh подкоманды
+
+```bash
+./ops/project.sh setup                    # OAuth + шаблоны
+./ops/project.sh config-update            # обновить конфиги
+./ops/project.sh model                    # показать модель
+./ops/project.sh model set qwen-coder     # установить модель
+./ops/project.sh container stop           # остановить контейнеры
+./ops/project.sh container shell          # подключиться к контейнеру
+./ops/project.sh lint                     # shellcheck
+./ops/project.sh check                    # bash -n проверка
+```
+
+### Добавление новой команды
+
+1. Добавь `do_newcmd()` в соответствующий скрипт
+2. Добавь `case` в `Main` секцию
+3. Обнови `help` вывод
+4. Добавь цель в Makefile (если нужна)
+
+### common.sh переменные
+
+| Переменная | Значение |
+|---|---|
+| `OPS_DIR` | Путь к ops/ |
+| `PROJECT_DIR` | Путь к корню проекта |
+| `VERSION` | Из файла IMAGE |
+| `IMAGE` | Из файла IMAGE |
+| `CONFIG_NAME` | qwen-code-container (или из QWEN_CONFIG_NAME) |
+| `CONFIG_DIR` | ~/.config/qwen-code-container |
+| `RUNTIME` | podman или docker (auto-detect) |
+| `BIN_TARGET` | ~/.local/bin/qcc |
+| `MODEL_FILE` | $CONFIG_DIR/model |
+
+### Утилиты из common.sh
+
+| Функция | Назначение |
+|---|---|
+| `detect_runtime` | Возвращает "podman", "docker" или "" |
+| `require_runtime` | Выход с ошибкой если runtime не найден |
+| `project_hash` | MD5 хэш пути проекта |
+| `container_name` | Имя контейнера qcc-XXXXXXXX |
+| `log_info/ok/warn/err` | Логирование с эмодзи |
+
+---
+
 ## 🚀 CI/CD и релизы
 
 ### GitHub Actions
@@ -368,6 +573,7 @@ qcc-$(echo -n "$PROJECT_DIR" | md5sum | cut -c1-8)
 - [ ] `README.md` — версия образа совпадает с `IMAGE`
 - [ ] `make check` — синтаксис bash в порядке
 - [ ] `make lint` — shellcheck прошёл
+- [ ] `ops/` скрипты синтаксически корректны (`bash -n ops/*.sh`)
 - [ ] CI зелёный (push в `main`)
 - [ ] `git add` не включает `.qwen/`
 - [ ] Коммит в Conventional Commits формате
