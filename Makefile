@@ -1,4 +1,4 @@
-.PHONY: help run shell setup clean install uninstall check-deps pull-image pull remove-image test-image model set-model config-update version stop
+.PHONY: help run shell setup clean install uninstall check-deps pull-image pull remove-image test-image model set-model config-update version stop health
 
 # Runtime detection: podman first (macOS), fallback docker
 RUNTIME := $(shell if command -v podman >/dev/null 2>&1; then echo podman; elif command -v docker >/dev/null 2>&1; then echo docker; fi)
@@ -39,6 +39,7 @@ help:
 	@echo "  make model           - показать текущую модель"
 	@echo "  make set-model       - установить модель (make set-model MODEL=qwen-coder)"
 	@echo "  make stop            - остановить запущенный контейнер qcc"
+	@echo "  make health          - диагностика состояния"
 	@echo ""
 	@echo "Переменные:"
 	@echo "  CONFIG_NAME=$(CONFIG_NAME)   - имя папки конфигов в ~/.config/"
@@ -303,3 +304,8 @@ stop:
 	else \
 		echo "⚠️  Нет запущенных контейнеров qcc"; \
 	fi
+
+# === Диагностика ===
+
+health:
+	@QWEN_IMAGE="$(IMAGE)" QWEN_CONFIG_NAME="$(CONFIG_NAME)" QWEN_MODEL="$(QWEN_MODEL)" QWEN_MODEL_EXPLICIT=1 ./bin/qwen-run --health

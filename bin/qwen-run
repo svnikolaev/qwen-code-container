@@ -61,6 +61,7 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
     echo "  --help, -h       Показать справку"
     echo "  --version, -v    Показать версию"
     echo "  --model          Показать текущую модель"
+    echo "  --health         Диагностика состояния"
     echo "  --stop           Остановить запущенный контейнер qcc"
     echo "  --attach         Подключиться к запущенной сессии"
     echo "  --new            Запустить новый контейнер"
@@ -88,6 +89,37 @@ if [ "${1:-}" = "--model" ]; then
     fi
     exit 0
 fi
+if [ "${1:-}" = "--health" ]; then
+    echo "📊 Qwen Code Container Health"
+    echo "  Launcher: v$VERSION | Image: $QWEN_IMAGE"
+    echo "  Runtime: $CONTAINER_CMD"
+    # Модель
+    if [ -f "$GLOBAL_CONFIG_DIR/model" ]; then
+        echo "  Model: $(cat "$GLOBAL_CONFIG_DIR/model")"
+    else
+        echo "  Model: (default)"
+    fi
+    # Контейнеры
+    RUNNING=$($CONTAINER_CMD ps --format '{{.Names}}' 2>/dev/null | grep '^qcc-' | wc -l)
+    echo "  Containers: $RUNNING running"
+    # .qwenignore
+    if [ -f "$PROJECT_DIR/.qwenignore" ]; then
+        PATTERNS=$(grep -v '^\s*#' "$PROJECT_DIR/.qwenignore" | grep -v '^\s*$' | wc -l)
+        echo "  .qwenignore: ✅ found ($PATTERNS patterns)"
+    else
+        echo "  .qwenignore: ⚠️ not found"
+    fi
+    # agent-profile
+    if [ -d "$GLOBAL_CONFIG_DIR/agent-profile" ]; then
+        echo "  Agent profile: ✅ enabled"
+    else
+        echo "  Agent profile: (not configured)"
+    fi
+    # Диск
+    DISK_FREE=$(df -h "$PROJECT_DIR" 2>/dev/null | awk 'NR==2{print $4}')
+    echo "  Disk free: $DISK_FREE"
+    exit 0
+fi
 
 # ----- Runtime detection -----
 if command -v podman >/dev/null 2>&1; then
@@ -96,6 +128,21 @@ elif command -v docker >/dev/null 2>&1; then
     CONTAINER_CMD="docker"
 else
     echo -e "\033[0;31m❌ Не найден ни podman, ни docker\033[0m"
+    exit 1
+fi
+
+# ----- Self-check: проверка целостности -----
+SELF_CHECK_OK=1
+for f in "$SCRIPT_DIR/../container/entrypoint.sh" "$PROJECT_ROOT/VERSION" "$PROJECT_ROOT/IMAGE"; do
+    if [ ! -f "$f" ]; then
+        echo -e "\033[0;31m❌ Отсутствует файл: $f\033[0m"
+        SELF_CHECK_OK=0
+    fi
+done
+if [ ! -x "$SCRIPT_DIR/../container/entrypoint.sh" ]; then
+    chmod +x "$SCRIPT_DIR/../container/entrypoint.sh" 2>/dev/null || true
+fi
+if [ "$SELF_CHECK_OK" = "0" ]; then
     exit 1
 fi
 
@@ -136,18 +183,24 @@ fi
 mkdir -p "$GLOBAL_CONFIG_DIR"/{npm,config,skills,oauth}
 mkdir -p "$GLOBAL_CONFIG_DIR/projects"
 mkdir -p "$PROJECT_CONFIG_DIR"
+mkdir -p "$PROJECT_CONFIG_DIR/tasks"
 
 # Миграция OAuth из старой проектной директории в глобальную
-# TODO: убрать после достаточного времени (разовая миграция для старых пользователей)
-if [ -d "$PROJECT_QWEN_DIR" ] && [ -d "$PROJECT_QWEN_DIR/oauth_creds" ]; then
-    if [ ! -d "$GLOBAL_CONFIG_DIR/oauth/oauth_creds" ]; then
-        cp -r "$PROJECT_QWEN_DIR/oauth_creds" "$GLOBAL_CONFIG_DIR/oauth/" 2>/dev/null || true
+# Разовая миграция — выполняется один раз, затем пропускается по флагу
+MIGRATION_FLAG="$GLOBAL_CONFIG_DIR/.oauth-migration-done"
+if [ ! -f "$MIGRATION_FLAG" ]; then
+    if [ -d "$PROJECT_QWEN_DIR" ] && [ -d "$PROJECT_QWEN_DIR/oauth_creds" ]; then
+        if [ ! -d "$GLOBAL_CONFIG_DIR/oauth/oauth_creds" ]; then
+            cp -r "$PROJECT_QWEN_DIR/oauth_creds" "$GLOBAL_CONFIG_DIR/oauth/" 2>/dev/null || true
+        fi
     fi
-fi
-if [ -f "$PROJECT_QWEN_DIR/oauth_creds.json" ] 2>/dev/null; then
-    if [ ! -f "$GLOBAL_CONFIG_DIR/oauth/oauth_creds.json" ]; then
-        cp "$PROJECT_QWEN_DIR/oauth_creds.json" "$GLOBAL_CONFIG_DIR/oauth/" 2>/dev/null || true
+    if [ -f "$PROJECT_QWEN_DIR/oauth_creds.json" ] 2>/dev/null; then
+        if [ ! -f "$GLOBAL_CONFIG_DIR/oauth/oauth_creds.json" ]; then
+            cp "$PROJECT_QWEN_DIR/oauth_creds.json" "$GLOBAL_CONFIG_DIR/oauth/" 2>/dev/null || true
+        fi
     fi
+    # Ставим флаг после первой попытки (даже если миграция не нужна)
+    touch "$MIGRATION_FLAG"
 fi
 
 # ----- Инициализация шаблонов (один раз) -----
@@ -194,18 +247,31 @@ if [ -d "$SCRIPT_DIR/../config-templates/qwen" ]; then
     done
 fi
 
-# ----- Обработка .qwenignore (простое перекрытие) -----
+# ----- Обработка .qwenignore (перекрытие файлов и директорий) -----
 OVERLAY_VOLUMES=()
 if [ -f "$PROJECT_DIR/.qwenignore" ]; then
     echo -e "${BLUE}📋 Найден .qwenignore — перекрываю указанные файлы${NC}"
+    NEGATE_PATTERNS=()
     while IFS= read -r line; do
         pattern=$(echo "$line" | sed 's/#.*//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         [ -z "$pattern" ] && continue
-        # Ищем файлы по паттерну (глубина 2)
+        # Negation: !pattern — убираем из списка исключаемых
+        if [[ "$pattern" == !* ]]; then
+            NEGATE_PATTERNS+=("${pattern#!}")
+            continue
+        fi
+        # Ищем файлы и директории по паттерну (без ограничения глубины)
         while IFS= read -r -d '' file; do
             rel="${file#$PROJECT_DIR/}"
-            [ -n "$rel" ] && OVERLAY_VOLUMES+=(-v "/workspace/$rel")
-        done < <(find "$PROJECT_DIR" -maxdepth 2 -path "$PROJECT_DIR/$pattern" -type f -print0 2>/dev/null || true)
+            [ -z "$rel" ] && continue
+            # Проверяем negation
+            SKIP=0
+            for np in "${NEGATE_PATTERNS[@]+"${NEGATE_PATTERNS[@]}"}"; do
+                case "$rel" in $np) SKIP=1; break ;; esac
+            done
+            [ "$SKIP" = "1" ] && continue
+            OVERLAY_VOLUMES+=(-v "/workspace/$rel")
+        done < <(find "$PROJECT_DIR" -path "$PROJECT_DIR/$pattern" \( -type f -o -type d \) -print0 2>/dev/null || true)
     done < "$PROJECT_DIR/.qwenignore"
 fi
 
@@ -241,7 +307,16 @@ VOLUMES=(
 if [ -d "$PROJECT_CONFIG_DIR/skills" ]; then
     VOLUMES+=(-v "$PROJECT_CONFIG_DIR/skills":/workspace/.qwen/skills)
 fi
+# Директория задач проекта (rw — AI пишет active-todo.json и journal.md)
+if [ -d "$PROJECT_CONFIG_DIR/tasks" ]; then
+    VOLUMES+=(-v "$PROJECT_CONFIG_DIR/tasks":/workspace/.qwen/tasks)
+fi
 VOLUMES+=(-v "$PROJECT_QWEN_DIR":/workspace/.qwen)
+
+# Персональный профиль AI (тихий — если директории нет, ничего не происходит)
+if [ -d "$GLOBAL_CONFIG_DIR/agent-profile" ]; then
+    VOLUMES+=(-v "$GLOBAL_CONFIG_DIR/agent-profile":/workspace/.qwen/agent-profile)
+fi
 
 # /root/.qwen — qwen-code хранит здесь авторизацию (OAuth) и сессии
 # Глобальная папка — авторизация общая для всех проектов
@@ -264,6 +339,18 @@ fi
 # Если процесс внутри контейнера пишет по этим путям, данные уходят в RAM, а не в проект.
 # Реальный кэш/конфиги доступны через /root/.npm и /root/.config (bind-mount выше).
 TMPFS=(--tmpfs /workspace/.npm:mode=755 --tmpfs /workspace/.config:mode=755)
+
+# ----- Pre-run hooks (тихие — если скрипт отсутствует, ничего не происходит) -----
+if [ -x "$PROJECT_DIR/.qcc/pre-run.sh" ]; then
+    if ! "$PROJECT_DIR/.qcc/pre-run.sh"; then
+        echo -e "\033[0;31m❌ Pre-run hook failed: $PROJECT_DIR/.qcc/pre-run.sh\033[0m"
+        exit 1
+    fi
+fi
+
+# ----- Лог запусков -----
+LAUNCH_LOG="$GLOBAL_CONFIG_DIR/launch.log"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) | qcc v$VERSION | project=$PROJECT_DIR | container=$CONTAINER_NAME | status=starting" >> "$LAUNCH_LOG" 2>/dev/null || true
 
 # ----- Проверка: если контейнер для этого проекта уже запущен -----
 if $CONTAINER_CMD ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
