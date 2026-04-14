@@ -12,3 +12,4 @@ temp.*
 tmp.*
 .gitconfig
 AGENTS.md
+.bash_history

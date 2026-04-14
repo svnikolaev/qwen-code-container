@@ -201,7 +201,7 @@ qcc --model         # проверить
 Образы Qwen Code публикуются на [**GitHub Container Registry**](https://github.com/QwenLM/qwen-code/pkgs/container/qwen-code).
 Там можно посмотреть доступные версии (теги) и выбрать актуальную.
 
-По умолчанию используется: `ghcr.io/qwenlm/qwen-code:0.14.1`
+По умолчанию используется: `ghcr.io/qwenlm/qwen-code:0.14.3`
 
 Чтобы обновить образ, измените `IMAGE` в `Makefile` или переменную `QWEN_IMAGE` при запуске:
 

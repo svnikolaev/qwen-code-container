@@ -2,11 +2,11 @@ name: ShellCheck
 
 on:
   push:
-    branches: [master]
+    branches: [main]
     paths:
       - 'bin/**'
   pull_request:
-    branches: [master]
+    branches: [main]
     paths:
       - 'bin/**'
 

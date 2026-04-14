@@ -1,4 +1,4 @@
-.PHONY: help run shell setup clean install uninstall check-deps pull-image pull remove-image test-image model set-model config-update version stop health
+.PHONY: help run shell setup clean install uninstall check-deps pull-image pull remove-image test-image model set-model config-update version stop health lint check
 
 # Runtime detection: podman first (macOS), fallback docker
 RUNTIME := $(shell if command -v podman >/dev/null 2>&1; then echo podman; elif command -v docker >/dev/null 2>&1; then echo docker; fi)
@@ -40,6 +40,8 @@ help:
 	@echo "  make set-model       - установить модель (make set-model MODEL=qwen-coder)"
 	@echo "  make stop            - остановить запущенный контейнер qcc"
 	@echo "  make health          - диагностика состояния"
+	@echo "  make lint            - запустить shellcheck"
+	@echo "  make check           - проверить синтаксис bash скриптов"
 	@echo ""
 	@echo "Переменные:"
 	@echo "  CONFIG_NAME=$(CONFIG_NAME)   - имя папки конфигов в ~/.config/"
@@ -309,3 +311,17 @@ stop:
 
 health:
 	@QWEN_IMAGE="$(IMAGE)" QWEN_CONFIG_NAME="$(CONFIG_NAME)" QWEN_MODEL="$(QWEN_MODEL)" QWEN_MODEL_EXPLICIT=1 ./bin/qwen-run --health
+
+# === Линтинг и проверка ===
+
+lint:
+	@echo "🔍 Запуск shellcheck..."
+	@command -v shellcheck >/dev/null 2>&1 || { echo "❌ shellcheck не установлен. Установите: sudo apt install shellcheck"; exit 1; }
+	@shellcheck --severity=warning bin/qwen-run container/entrypoint.sh
+	@echo "✅ shellcheck прошёл без ошибок"
+
+check:
+	@echo "🔍 Проверка синтаксиса bash скриптов..."
+	@bash -n bin/qwen-run && echo "✅ bin/qwen-run — синтаксис в порядке"
+	@bash -n container/entrypoint.sh && echo "✅ container/entrypoint.sh — синтаксис в порядке"
+	@echo "✅ Все скрипты синтаксически корректны"
