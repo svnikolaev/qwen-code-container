@@ -287,6 +287,13 @@ else
     echo -e "${YELLOW}⚠️  Модель не задана — используется по умолчанию от провайдера${NC}"
 fi
 
+# ----- Персональный промпт (personality.md) -----
+PERSONALITY_FILE="$GLOBAL_CONFIG_DIR/agent-profile/personality.md"
+if [ -f "$PERSONALITY_FILE" ]; then
+    PERSONALITY_CONTENT=$(cat "$PERSONALITY_FILE")
+    MODEL_ARGS+=(--append-system-prompt "$PERSONALITY_CONTENT")
+fi
+
 # ----- Git config -----
 GIT_ENVS=()
 if git config --global user.name >/dev/null 2>&1; then
