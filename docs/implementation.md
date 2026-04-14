@@ -1,7 +1,7 @@
 # Описание реализации: Qwen Code Container
 
 **Версия документа:** 4.0
-**Версия проекта:** 0.2.1
+**Версия проекта:** 0.3.0
 
 ---
 
@@ -16,25 +16,34 @@
 ```text
 qwen-code-container/
 ├── bin/
-│   └── qwen-run              # Главный launcher-скрипт (bash, ~330 строк)
+│   └── qwen-run              # Главный launcher-скрипт (bash, ~430 строк)
 ├── container/
 │   └── entrypoint.sh         # Entry-point контейнера (bash, ~12 строк)
 ├── config-templates/
 │   ├── agent/
 │   │   └── AGENTS.md         # Шаблон промпта для AI-агента
 │   ├── qwen/
-│   │   ├── output-language.md # Промпт: отвечать на английском
+│   │   ├── output-language.md # Промпт: отвечать на русском
 │   │   └── .gitignore        # Git-игнор для шаблонов Qwen
 │   └── skills/
 │       ├── file-consistency-checker.md
 │       ├── git-commit.md
 │       ├── five-whys.md
-│       └── session-state-saver.md
+│       ├── session-state-saver.md
+│       └── task-tracker.md
 ├── docs/
-│   ├── specification.md       # Техническое задание (абстрактное)
-│   └── implementation.md      # Описание реализации (этот файл)
-├── Makefile                  # ~280 строк, 15+ целей
-├── VERSION                   # Текущая версия проекта (0.2.0)
+│   ├── specification.md       # Техническое задание
+│   ├── implementation.md      # Описание реализации (этот файл)
+│   ├── MAINTENANCE.md         # Руководство по поддержке
+│   └── reference.md           # Справочник
+├── ops/
+│   ├── common.sh              # Общие переменные и утилиты
+│   ├── system.sh              # install, uninstall, check-deps
+│   ├── image.sh               # pull, remove, test
+│   └── project.sh             # setup, config-update, model, container, lint, check
+├── Makefile                  # ~100 строк, тонкая обёртка над ops/
+├── IMAGE                     # Docker-образ (единый источник версии)
+├── VERSION                   # Текущая версия проекта (0.2.1)
 ├── .env.example              # Пример переменных окружения
 ├── .qwenignore.example       # Пример .qwenignore
 ├── LICENSE                   # MIT License
@@ -52,9 +61,10 @@ qwen-code-container/
 
 1. Если существует `$PROJECT_DIR/.qwenignore` — читаем построчно
 2. Удаляем комментарии (всё после `#`) и пустые строки
-3. Для каждого паттерна ищем файлы через `find -maxdepth 2`
-4. Каждый найденный файл добавляется в `OVERLAY_VOLUMES` как `-v /workspace/<относительный_путь>`
-5. Docker монтирует пустой anonymous volume поверх файла, делая его недоступным внутри контейнера
+3. Поддержка negation: `!pattern` отменяет перекрытие
+4. Для каждого паттерна ищем файлы через `find` (без ограничения глубины)
+5. Каждый найденный файл добавляется в `OVERLAY_VOLUMES` как `-v /workspace/<относительный_путь>`
+6. Docker монтирует пустой anonymous volume поверх файла, делая его недоступным внутри контейнера
 
 #### 10.3. Реализация запуска контейнера
 
@@ -258,7 +268,13 @@ mkdir -p "$PROJECT_QWEN_DIR"
 - Восстановление: при возобновлении сессии читает файл и восстанавливает контекст
 - Безопасность: не сохраняет секреты и личные данные
 
-#### 10.11. AGENTS.md — реализация
+**Task Tracker** (`config-templates/skills/task-tracker.md`):
+
+- Триггер: запрос на разбиение задачи, начало новой сессии
+- Журнал задач в `/workspace/.qwen/tasks/`
+- Отслеживание прогресса, статусы, заметки
+
+#### 10.10. AGENTS.md — реализация
 
 Файл **не хранится в git** (добавлен в `.gitignore`). Шаблон лежит в
 `config-templates/agent/AGENTS.md` и копируется при `make install`.
